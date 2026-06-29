@@ -17,10 +17,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 #[derive(Parser)]
 #[command(name = "vibege-runtime", version, about = "VibeGE Game Runtime — AI-friendly overlay")]
 struct RuntimeCli {
-    #[arg(short = 'p', long = "project", default_value = ".")]
+    #[arg(short = 'p', long = "project", default_value = "", required = false)]
     project_dir: String,
 
-    #[arg(short = 'e', long = "entry", default_value = "src/main.lua")]
+    #[arg(short = 'e', long = "entry", default_value = "", required = false)]
     entry: String,
 
     #[arg(long = "width", default_value = "800")]
@@ -37,15 +37,33 @@ fn main() -> anyhow::Result<()> {
     install_panic_hook();
     let cli = RuntimeCli::parse();
 
-    let project_dir = PathBuf::from(&cli.project_dir);
-    let game_path = project_dir.join(&cli.entry);
-    if !game_path.exists() {
-        anyhow::bail!("Game entry not found: {}", game_path.display());
-    }
-    let game_source = std::fs::read_to_string(&game_path)?;
+    let project_base = if cli.project_dir.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(&cli.project_dir)
+    };
+    let has_game = !cli.entry.is_empty() && !cli.project_dir.is_empty();
+    let game_source: Option<String> = if has_game {
+        let project_dir = PathBuf::from(&cli.project_dir);
+        let game_path = project_dir.join(&cli.entry);
+        if game_path.exists() {
+            info!(entry = %game_path.display(), "Loading game");
+            Some(std::fs::read_to_string(&game_path)?)
+        } else {
+            warn!("Game entry not found: {} — starting in launcher mode", game_path.display());
+            None
+        }
+    } else {
+        info!("No game specified — launcher mode");
+        None
+    };
 
     logging::init_logging(LogLevel::Info);
-    info!(entry = %game_path.display(), overlay = cli.overlay, "VibeGE Runtime");
+    if let Some(ref src) = game_source {
+        info!("Game source loaded ({} bytes)", src.len());
+    } else {
+        info!("Launcher mode — waiting for game selection");
+    }
 
     let event_loop = EventLoop::new()
         .map_err(|e| anyhow::anyhow!("Event loop: {e}"))?;
@@ -103,7 +121,7 @@ fn main() -> anyhow::Result<()> {
     let input = Arc::new(std::sync::Mutex::new(InputManager::new()));
 
     // Suspension engine — saves/resumes game state
-    let snap_dir = project_dir.join(".vibege").join("snapshots");
+    let snap_dir = project_base.join(".vibege").join("snapshots");
     std::fs::create_dir_all(&snap_dir).ok();
     let mut suspension = SuspensionEngine::with_config(SuspensionConfig {
         snapshot_dir: snap_dir,
@@ -215,17 +233,20 @@ fn main() -> anyhow::Result<()> {
 
     lua.globals().set("vibege", vibege).expect("set vibege globals");
 
-    // Load game
-    info!("Loading game");
-    lua.load(&game_source).exec().map_err(|e| anyhow::anyhow!("Lua: {e}"))?;
-
-    if let Ok(init_fn) = lua.globals().get::<Function>("init") {
-        let _ = init_fn.call::<()>(());
+    // Load game (if specified)
+    if let Some(ref src) = game_source {
+        info!("Loading game");
+        if let Err(e) = lua.load(src.as_str()).exec() {
+            warn!("Game script error: {e} — starting in launcher mode");
+        } else if let Ok(init_fn) = lua.globals().get::<Function>("init") {
+            let _ = init_fn.call::<()>(());
+        }
     }
 
     // Main loop
-    info!("Entering game loop");
+    info!("Entering main loop");
     let mut last_frame = std::time::Instant::now();
+    let has_lua_game = game_source.is_some();
 
     event_loop.run(move |event, elwt| {
         match event {
@@ -234,11 +255,12 @@ fn main() -> anyhow::Result<()> {
 
                 match event {
                     WindowEvent::CloseRequested => {
-                        // Save state on close
-                        if let Ok(state_fn) = lua.globals().get::<Function>("get_state") {
-                            if let Ok(state) = state_fn.call::<String>("") {
-                                let _ = suspension.suspend(state.as_bytes(), 0.0, "last-session");
-                                info!("Game state saved");
+                        if has_lua_game {
+                            if let Ok(state_fn) = lua.globals().get::<Function>("get_state") {
+                                if let Ok(state) = state_fn.call::<String>("") {
+                                    let _ = suspension.suspend(state.as_bytes(), 0.0, "last-session");
+                                    info!("Game state saved");
+                                }
                             }
                         }
                         info!("Window closed");
@@ -252,17 +274,19 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     WindowEvent::Focused(false) => {
-                        // Auto-suspend on focus loss (overlay hidden)
-                        info!("Focus lost — suspending");
-                        if let Ok(suspend_fn) = lua.globals().get::<Function>("suspend") {
-                            let _ = suspend_fn.call::<()>(());
+                        info!("Focus lost");
+                        if has_lua_game {
+                            if let Ok(suspend_fn) = lua.globals().get::<Function>("suspend") {
+                                let _ = suspend_fn.call::<()>(());
+                            }
                         }
                     }
                     WindowEvent::Focused(true) => {
-                        // Auto-resume on focus regain
-                        info!("Focus gained — resuming");
-                        if let Ok(resume_fn) = lua.globals().get::<Function>("resume") {
-                            let _ = resume_fn.call::<()>(());
+                        info!("Focus gained");
+                        if has_lua_game {
+                            if let Ok(resume_fn) = lua.globals().get::<Function>("resume") {
+                                let _ = resume_fn.call::<()>(());
+                            }
                         }
                     }
                     _ => {}
@@ -307,13 +331,15 @@ fn main() -> anyhow::Result<()> {
                     elwt.exit();
                     return;
                 }
-                // Check if we have a saved state to restore
-                let snap_id = suspension.list_snapshots().first().map(|s| s.id.clone());
-                if let Some(ref id) = snap_id {
-                    if let Ok(snapshot) = suspension.resume(id) {
-                        if let Ok(restore_fn) = lua.globals().get::<Function>("restore_state") {
-                            let state_str = String::from_utf8_lossy(&snapshot.game_state).to_string();
-                            let _ = restore_fn.call::<()>(state_str);
+                // Restore saved state (game mode only)
+                if has_lua_game {
+                    let snap_id = suspension.list_snapshots().first().map(|s| s.id.clone());
+                    if let Some(ref id) = snap_id {
+                        if let Ok(snapshot) = suspension.resume(id) {
+                            if let Ok(restore_fn) = lua.globals().get::<Function>("restore_state") {
+                                let state_str = String::from_utf8_lossy(&snapshot.game_state).to_string();
+                                let _ = restore_fn.call::<()>(state_str);
+                            }
                         }
                     }
                 }
@@ -331,25 +357,32 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // update(dt)
-                if let Ok(update_fn) = lua.globals().get::<Function>("update") {
-                    if let Err(e) = update_fn.call::<()>(dt) {
-                        error!("update(): {e}");
-                        elwt.exit();
-                        return;
+                if has_lua_game {
+                    // Game mode — call Lua update/render
+                    if let Ok(update_fn) = lua.globals().get::<Function>("update") {
+                        if let Err(e) = update_fn.call::<()>(dt) {
+                            error!("update(): {e}");
+                            elwt.exit();
+                            return;
+                        }
                     }
+                    if let Ok(render_fn) = lua.globals().get::<Function>("render") {
+                        if let Err(e) = render_fn.call::<()>(()) {
+                            error!("render(): {e}");
+                            elwt.exit();
+                            return;
+                        }
+                    }
+                } else {
+                    // Launcher mode — show placeholder screen
+                    renderer.set_clear(0.05, 0.05, 0.15, 1.0);
+                    // Draw a simple title bar graphic
+                    renderer.draw_rect(100.0, 280.0, 600.0, 40.0, 0.3, 0.5, 0.9, 1.0);
+                    renderer.draw_rect(350.0, 320.0, 100.0, 4.0, 0.5, 0.7, 1.0, 0.5);
+                    // This is where the launcher game list would render
                 }
 
-                // render() — game calls clear + draw_rect
-                if let Ok(render_fn) = lua.globals().get::<Function>("render") {
-                    if let Err(e) = render_fn.call::<()>(()) {
-                        error!("render(): {e}");
-                        elwt.exit();
-                        return;
-                    }
-                }
-
-                // Present everything after game render
+                // Present everything after render
                 if let Err(e) = renderer.render() {
                     error!("GPU render: {e}");
                 }

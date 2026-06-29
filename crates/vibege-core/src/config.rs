@@ -5,11 +5,12 @@ use serde::Deserialize;
 use crate::error::{ErrorCode, Result, RuntimeError};
 
 /// Log verbosity level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -24,12 +25,6 @@ impl LogLevel {
             Self::Warn => "warn",
             Self::Error => "error",
         }
-    }
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
     }
 }
 

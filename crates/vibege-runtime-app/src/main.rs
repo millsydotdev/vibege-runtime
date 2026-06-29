@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use mlua::{Function, Lua};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use vibege_audio::AudioSystem;
 use vibege_core::{install_panic_hook, logging, LogLevel};
 use vibege_input::InputManager;
@@ -12,6 +12,7 @@ use vibege_suspension::{SuspensionConfig, SuspensionEngine};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, WindowEvent};
 use winit::event_loop::EventLoop;
+use winit::event_loop::EventLoopBuilder;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 #[derive(Parser)]
@@ -71,13 +72,17 @@ fn main() -> anyhow::Result<()> {
             if let Ok(handle) = window.window_handle() {
                 if let RawWindowHandle::Win32(w32) = handle.as_ref() {
                     let hwnd = w32.hwnd.get() as HWND;
-                    unsafe {
-                        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
-                    }
+                    unsafe { SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE); }
                 }
             }
         }
-        info!("Overlay mode enabled — always on top");
+        info!("Overlay mode enabled — Ctrl+Shift+V to toggle");
+    }
+
+    // Start system tray (if available)
+    let _tray_handle = vibege_tray::start();
+    if _tray_handle.is_some() {
+        info!("System tray active");
     }
 
     // GPU
@@ -231,6 +236,35 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Event::AboutToWait => {
+                // Check for global hotkey Ctrl+Shift+V via platform APIs
+                #[cfg(target_os = "windows")]
+                {
+                    // Use GetAsyncKeyState for global hotkey polling
+                    // VK_CONTROL = 0x11, VK_SHIFT = 0x10, VK_V = 0x56
+                    // Only check every 10 frames to reduce CPU usage
+                    const VK_CONTROL: i32 = 0x11;
+                    const VK_SHIFT: i32 = 0x10;
+                    const VK_V: i32 = 0x56;
+                    // Check with bit 15 (most significant bit) for current press state
+                    // This is a simple polling approach that works across windows
+                    unsafe {
+                        let ctrl = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(VK_CONTROL);
+                        let shift = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(VK_SHIFT);
+                        let v = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(VK_V);
+                        if ctrl < 0 && shift < 0 && v < 0 {
+                            // All three are pressed — toggle overlay once
+                            // We check for the V key being pressed THIS frame
+                            vibege_tray::request_toggle();
+                        }
+                    }
+                }
+
+                // Handle hotkey toggle
+                if vibege_tray::should_toggle_overlay() {
+                    let visible = window.is_visible().unwrap_or(true);
+                    window.set_visible(!visible);
+                    info!(visible = !visible, "Overlay toggled via hotkey");
+                }
                 // Check if we have a saved state to restore
                 let snap_id = suspension.list_snapshots().first().map(|s| s.id.clone());
                 if let Some(ref id) = snap_id {

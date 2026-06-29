@@ -16,11 +16,12 @@ vibege-input = { path = "../vibege-input" }
 vibege-renderer = { path = "../vibege-renderer" }
 vibege-audio = { path = "../vibege-audio" }
 vibege-suspension = { path = "../vibege-suspension" }
+vibege-tray = { path = "../vibege-tray" }
 winit = "0.30"
 mlua = { version = "0.10", features = ["luau"] }
 pollster = "0.4"
 tracing = "0.1"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 raw-window-handle = "0.6"

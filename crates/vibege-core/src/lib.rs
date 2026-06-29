@@ -7,6 +7,8 @@
 //! - **Configuration** — loading from CLI args, environment, and config files
 //! - **Error handling** — typed errors with machine-readable codes
 //! - **Logging** — structured JSON logging via `tracing`
+//! - **Metrics** — counters, gauges, FPS tracking
+//! - **Crash reporting** — panic hook, crash dump generation
 //!
 //! ## Architecture
 //!
@@ -38,10 +40,14 @@
 //! ```
 
 pub mod config;
+pub mod crash;
 pub mod error;
 pub mod lifecycle;
 pub mod logging;
+pub mod metrics;
 
 pub use config::{load_config, LogLevel, MergedConfig, RuntimeConfig, WindowConfig};
+pub use crash::install_panic_hook;
 pub use error::{ErrorCode, Result, RuntimeError};
 pub use lifecycle::{App, AppState, LifecycleHandler, Signal};
+pub use metrics::{MetricsRegistry, MetricsSnapshot};

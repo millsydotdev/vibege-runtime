@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::config::{load_config, MergedConfig};
 use crate::error::Result;
 use crate::logging;
+use crate::metrics::MetricsRegistry;
 
 /// Describes the current state of the runtime application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,9 @@ pub struct App {
 
     /// Flag set to true when a suspend signal is received.
     suspend_requested: Arc<AtomicBool>,
+
+    /// Runtime metrics registry for instrumentation.
+    metrics: Arc<MetricsRegistry>,
 }
 
 impl App {
@@ -81,7 +85,11 @@ impl App {
     ///
     /// This loads and merges configuration from CLI args, environment variables,
     /// config files, and defaults.
+    ///
+    /// On creation, it also installs the global panic hook and initialises the
+    /// metrics registry.
     pub fn new() -> Result<Self> {
+        crate::crash::install_panic_hook();
         let config = load_config()?;
         Ok(Self {
             state: AppState::Initialising,
@@ -89,6 +97,7 @@ impl App {
             started_at: Instant::now(),
             shutdown_requested: Arc::new(AtomicBool::new(false)),
             suspend_requested: Arc::new(AtomicBool::new(false)),
+            metrics: MetricsRegistry::new(),
         })
     }
 
@@ -105,6 +114,11 @@ impl App {
     /// Returns the duration since the application started.
     pub fn uptime(&self) -> std::time::Duration {
         self.started_at.elapsed()
+    }
+
+    /// Returns a reference to the metrics registry.
+    pub fn metrics(&self) -> &Arc<MetricsRegistry> {
+        &self.metrics
     }
 
     /// Runs the application with the given lifecycle handler.
@@ -178,6 +192,9 @@ impl App {
             let dt = now.duration_since(last_frame).as_secs_f64();
             last_frame = now;
 
+            // Record metrics for this frame
+            self.metrics.record_frame(dt);
+
             // Update
             handler.on_update(dt)?;
 
@@ -226,6 +243,7 @@ impl App {
             }
         }
 
+        self.metrics.stop();
         logging::flush_logs();
         self.state = AppState::Exited;
         tracing::info!(uptime_secs = self.uptime().as_secs_f64(), "Runtime exited");

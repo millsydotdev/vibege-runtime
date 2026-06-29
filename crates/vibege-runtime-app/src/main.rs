@@ -42,6 +42,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         PathBuf::from(&cli.project_dir)
     };
+    let launcher_source = include_str!("../../../resources/launcher.lua");
     let has_game = !cli.entry.is_empty() && !cli.project_dir.is_empty();
     let game_source: Option<String> = if has_game {
         let project_dir = PathBuf::from(&cli.project_dir);
@@ -233,20 +234,21 @@ fn main() -> anyhow::Result<()> {
 
     lua.globals().set("vibege", vibege).expect("set vibege globals");
 
-    // Load game (if specified)
-    if let Some(ref src) = game_source {
-        info!("Loading game");
-        if let Err(e) = lua.load(src.as_str()).exec() {
-            warn!("Game script error: {e} — starting in launcher mode");
-        } else if let Ok(init_fn) = lua.globals().get::<Function>("init") {
-            let _ = init_fn.call::<()>(());
-        }
+    // Load game or launcher
+    let game_script = game_source.as_deref().unwrap_or(launcher_source);
+    let is_launcher = game_source.is_none();
+
+    info!(is_launcher = is_launcher, "Loading game script");
+    if let Err(e) = lua.load(game_script).exec() {
+        warn!("Script error: {e}");
+    } else if let Ok(init_fn) = lua.globals().get::<Function>("init") {
+        let _ = init_fn.call::<()>(());
     }
 
     // Main loop
     info!("Entering main loop");
     let mut last_frame = std::time::Instant::now();
-    let has_lua_game = game_source.is_some();
+    let has_lua_game = !is_launcher;
 
     event_loop.run(move |event, elwt| {
         match event {

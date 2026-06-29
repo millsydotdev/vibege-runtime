@@ -342,7 +342,7 @@ impl Renderer {
         // Get the bind group for the texture (or default white)
         // Get bind group by index. Store index to look up later.
         let tex_idx = tex_id_for_batch;
-        let bg: &wgpu::BindGroup = &self.default_bind_group; // default fallback
+        let _bg: &wgpu::BindGroup = &self.default_bind_group; // default fallback
 
         if !vertices.is_empty() {
             let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

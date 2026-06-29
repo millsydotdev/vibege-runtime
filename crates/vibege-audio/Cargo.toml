@@ -1,0 +1,12 @@
+[package]
+name = "vibege-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Audio system — sound effect playback and mixing via rodio"
+
+[dependencies]
+rodio = "0.19"
+tracing = "0.1"
+thiserror = "2"

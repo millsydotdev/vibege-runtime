@@ -5,6 +5,7 @@ members = [
     "crates/vibege-window",
     "crates/vibege-input",
     "crates/vibege-renderer",
+    "crates/vibege-audio",
     "crates/vibege-ipc",
     "crates/vibege-sandbox",
     "crates/vibege-suspension",

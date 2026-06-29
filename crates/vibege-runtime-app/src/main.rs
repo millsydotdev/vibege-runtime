@@ -141,16 +141,50 @@ fn main() -> anyhow::Result<()> {
 
     // Render bindings — deferred rendering
     let render_table = lua.create_table().expect("create render table");
-    let ren = Arc::clone(&renderer);
-    render_table.set("draw_rect", lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
-        ren.draw_rect(x, y, w, h, r, g, b, a);
-        Ok(())
-    }).expect("create draw_rect")).expect("set draw_rect");
-    let ren2 = Arc::clone(&renderer);
-    render_table.set("clear", lua.create_function(move |_, (bg_r, bg_g, bg_b, bg_a): (f32, f32, f32, f32)| {
-        ren2.set_clear(bg_r, bg_g, bg_b, bg_a);
-        Ok(())
-    }).expect("create clear")).expect("set clear");
+
+    // draw_rect(x, y, w, h, r, g, b, a) — colored rectangle
+    {
+        let ren = Arc::clone(&renderer);
+        render_table.set("draw_rect", lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
+            ren.draw_rect(x, y, w, h, r, g, b, a);
+            Ok(())
+        }).expect("create draw_rect")).expect("set draw_rect");
+    }
+
+    // load_texture(filepath) — load PNG from file, returns texture index
+    {
+        let ren = Arc::clone(&renderer);
+        render_table.set("load_texture", lua.create_function(move |_, path: String| {
+            match std::fs::read(&path) {
+                Ok(data) => {
+                    match ren.load_texture(&data) {
+                        Ok(idx) => Ok(idx as i64),
+                        Err(e) => Err(mlua::Error::RuntimeError(format!("Texture error: {e}"))),
+                    }
+                }
+                Err(e) => Err(mlua::Error::RuntimeError(format!("File error: {e}"))),
+            }
+        }).expect("create load_texture")).expect("set load_texture");
+    }
+
+    // draw_sprite(tex_index, x, y, w, h) — draw textured sprite
+    {
+        let ren = Arc::clone(&renderer);
+        render_table.set("draw_sprite", lua.create_function(move |_, (idx, x, y, w, h): (i64, f32, f32, f32, f32)| {
+            ren.draw_sprite(idx as usize, x, y, w, h);
+            Ok(())
+        }).expect("create draw_sprite")).expect("set draw_sprite");
+    }
+
+    // clear(r, g, b, a) — set background color
+    {
+        let ren = Arc::clone(&renderer);
+        render_table.set("clear", lua.create_function(move |_, (bg_r, bg_g, bg_b, bg_a): (f32, f32, f32, f32)| {
+            ren.set_clear(bg_r, bg_g, bg_b, bg_a);
+            Ok(())
+        }).expect("create clear")).expect("set clear");
+    }
+
     vibege.set("render", render_table).expect("set render");
 
     // Audio bindings

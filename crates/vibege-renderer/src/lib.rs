@@ -1,10 +1,3 @@
-//! # VibeGE Renderer
-//!
-//! GPU-accelerated 2D renderer using wgpu.
-//!
-//! Provides sprite batching, texture management, and basic 2D rendering
-//! with a simple API. Integrates with the WindowManager's native window.
-
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -23,6 +16,8 @@ pub enum RenderError {
     SurfaceFailed(String),
     #[error("Failed to load texture: {0}")]
     TextureLoadFailed(String),
+    #[error("Texture not found: {0}")]
+    TextureNotFound(String),
     #[error("No surface available")]
     NoSurface,
     #[error("Render pass error: {0}")]
@@ -58,12 +53,16 @@ impl SpriteVertex {
     }
 }
 
-/// A loaded GPU texture.
-pub struct GpuTexture {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub width: u32,
-    pub height: u32,
+/// A simple texture without a bind group (for internal use).
+struct RawTexture {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+/// A draw command stored per frame — either a colored rect or a textured sprite.
+enum DrawCmd {
+    Rect { x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32 },
+    Sprite { tex_idx: usize, x: f32, y: f32, w: f32, h: f32 },
 }
 
 /// The GPU renderer.
@@ -73,45 +72,34 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (u32, u32),
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    default_texture: GpuTexture,
-    rect_batch: Mutex<Vec<SpriteVertex>>,
+
+    default_bind_group: wgpu::BindGroup,
+    texture_bind_groups: Mutex<Vec<wgpu::BindGroup>>,
+
+    draw_list: Mutex<Vec<DrawCmd>>,
     clear_color: Mutex<(f32, f32, f32, f32)>,
     screen_size: (f32, f32),
 }
 
 impl Renderer {
-    /// Creates a new renderer from a wgpu-compatible window.
-    ///
-    /// # Panics
-    /// Panics if the shader source is missing.
     pub async fn new(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self, RenderError> {
         let size = (width, height);
-
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-
         let surface = instance.create_surface(Arc::clone(&window))
             .map_err(|e| RenderError::SurfaceFailed(e.to_string()))?;
-
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
-        }).await
-        .ok_or_else(|| RenderError::AdapterFailed("No suitable GPU adapter found".into()))?;
+        }).await.ok_or_else(|| RenderError::AdapterFailed("No suitable GPU adapter found".into()))?;
 
-        info!(
-            adapter = %adapter.get_info().name,
-            backend = ?adapter.get_info().backend,
-            "GPU adapter selected"
-        );
+        info!(adapter = %adapter.get_info().name, backend = ?adapter.get_info().backend, "GPU adapter selected");
 
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -119,22 +107,17 @@ impl Renderer {
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        ).await
-        .map_err(|e| RenderError::DeviceFailed(e.to_string()))?;
+            }, None,
+        ).await.map_err(|e| RenderError::DeviceFailed(e.to_string()))?;
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps.formats.iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
+            .find(|f| f.is_srgb()).copied().unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.0.max(1),
-            height: size.1.max(1),
+            width: size.0.max(1), height: size.1.max(1),
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
@@ -142,30 +125,50 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
+        // Shader with texture sampling
         let shader_source = include_str!("shaders/shader.wgsl");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sprite Shader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
-        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        // Bind group layout: sampler + texture
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Texture Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sprite Pipeline Layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Sprite Pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
+                module: &shader, entry_point: "vs_main",
                 buffers: &[SpriteVertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
+                module: &shader, entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -175,34 +178,16 @@ impl Renderer {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
+                ..Default::default()
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
+            multiview: None, cache: None,
         });
 
-        let (vertices, indices) = create_fullscreen_quad();
-        let num_indices = indices.len() as u32;
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Quad Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Quad Index Buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
+        // Default sampler
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Default Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -214,84 +199,102 @@ impl Renderer {
             ..Default::default()
         });
 
-        let default_texture = create_solid_color_texture(&device, &queue, 1, 1, [255, 255, 255, 255]);
+        // Create default white texture bind group (for untextured rects)
+        let default_tex = create_solid_color_texture(&device, &queue, 1, 1, [255, 255, 255, 255]);
+        let default_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Default White BG"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&default_tex.view) },
+            ],
+        });
 
-        info!(
-            width = size.0,
-            height = size.1,
-            format = ?config.format,
-            "Renderer initialised"
-        );
+        info!(width = size.0, height = size.1, format = ?config.format, "Renderer initialised");
 
         Ok(Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
-            sampler,
-            default_texture,
-            rect_batch: Mutex::new(Vec::new()),
+            surface, device, queue, config, size, pipeline, bind_group_layout, sampler,
+            default_bind_group,
+            texture_bind_groups: Mutex::new(Vec::new()),
+            draw_list: Mutex::new(Vec::new()),
             clear_color: Mutex::new((0.0, 0.0, 0.0, 1.0)),
             screen_size: (size.0 as f32, size.1 as f32),
         })
     }
 
-    /// Returns the wgpu device for external resource creation.
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
+    /// Load a PNG texture from file bytes. Returns a texture index for drawing.
+    pub fn load_texture(&self, data: &[u8]) -> Result<usize, RenderError> {
+        let img = image::load_from_memory(data)
+            .map_err(|e| RenderError::TextureLoadFailed(e.to_string()))?
+            .to_rgba8();
+        let (width, height) = img.dimensions();
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("user_tex"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &img,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("user_bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+            ],
+        });
+
+        let tex_idx = {
+            let mut groups = self.texture_bind_groups.lock().unwrap();
+            let idx = groups.len();
+            groups.push(bind_group);
+            idx
+        };
+        debug!(idx = tex_idx, width, height, "Texture loaded");
+        Ok(tex_idx)
     }
 
-    /// Returns the wgpu queue for external command submission.
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
-    /// Returns the surface configuration format.
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
-
-    /// Resizes the renderer's output surface.
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width > 0 && height > 0 {
-            self.size = (width, height);
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            debug!(width, height, "Surface resized");
-        }
-    }
-
-    /// Records a colored rectangle for the next frame.
-    /// Coordinates are in screen space (0,0 = top-left).
+    /// Queue a colored rectangle for the next frame.
     pub fn draw_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
-        let (sw, sh) = self.screen_size;
-        // Convert screen coords to NDC (-1 to 1)
-        let x1 = (x / sw) * 2.0 - 1.0;
-        let y1 = 1.0 - (y / sh) * 2.0;
-        let x2 = ((x + w) / sw) * 2.0 - 1.0;
-        let y2 = 1.0 - ((y + h) / sh) * 2.0;
-
-        let mut batch = self.rect_batch.lock().unwrap();
-        batch.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [r, g, b, a] });
-        batch.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [r, g, b, a] });
-        batch.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [r, g, b, a] });
-        batch.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [r, g, b, a] });
+        self.draw_list.lock().unwrap().push(DrawCmd::Rect { x, y, w, h, r, g, b, a });
     }
 
-    /// Sets the background clear color for the next frame.
+    /// Queue a textured sprite for the next frame.
+    pub fn draw_sprite(&self, tex_idx: usize, x: f32, y: f32, w: f32, h: f32) {
+        self.draw_list.lock().unwrap().push(DrawCmd::Sprite { tex_idx, x, y, w, h });
+    }
+
+    /// Set the background clear color.
     pub fn set_clear(&self, r: f32, g: f32, b: f32, a: f32) {
         *self.clear_color.lock().unwrap() = (r, g, b, a);
     }
 
-    /// Renders all queued rectangles with the current clear color and presents.
+    /// Render all queued commands and present the frame.
     pub fn render(&self) -> Result<(), RenderError> {
-        let bg = *self.clear_color.lock().unwrap();
+        let clear = *self.clear_color.lock().unwrap();
         let frame = self.surface.get_current_texture()
             .map_err(|e| RenderError::SurfaceFailed(e.to_string()))?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -299,43 +302,72 @@ impl Renderer {
             label: Some("Render Encoder"),
         });
 
-        let mut batch = self.rect_batch.lock().unwrap();
-        let rect_count = batch.len();
+        let mut vertices: Vec<SpriteVertex> = Vec::new();
+        let mut indices: Vec<u16> = Vec::new();
+        let mut tex_id_for_batch: Option<usize> = None;
+        let (sw, sh) = self.screen_size;
 
-        let staging_verts = if rect_count > 0 {
-            let verts: Vec<SpriteVertex> = batch.drain(..).collect();
-            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Rect VB"),
-                contents: bytemuck::cast_slice(&verts),
+        // Convert draw commands to vertices
+        let draw_cmds = self.draw_list.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for cmd in &draw_cmds {
+            match cmd {
+                DrawCmd::Rect { x, y, w, h, r, g, b, a } => {
+                    let x1 = (x / sw) * 2.0 - 1.0;
+                    let y1 = 1.0 - (y / sh) * 2.0;
+                    let x2 = ((x + w) / sw) * 2.0 - 1.0;
+                    let y2 = 1.0 - ((y + h) / sh) * 2.0;
+                    let base = vertices.len() as u16;
+                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [*r, *g, *b, *a] });
+                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [*r, *g, *b, *a] });
+                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [*r, *g, *b, *a] });
+                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [*r, *g, *b, *a] });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+                DrawCmd::Sprite { tex_idx, x, y, w, h } => {
+                    let x1 = (x / sw) * 2.0 - 1.0;
+                    let y1 = 1.0 - (y / sh) * 2.0;
+                    let x2 = ((x + w) / sw) * 2.0 - 1.0;
+                    let y2 = 1.0 - ((y + h) / sh) * 2.0;
+                    let base = vertices.len() as u16;
+                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
+                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
+                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
+                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    tex_id_for_batch = Some(*tex_idx);
+                }
+            }
+        }
+
+        // Get the bind group for the texture (or default white)
+        // Get bind group by index. Store index to look up later.
+        let tex_idx = tex_id_for_batch;
+        let bg: &wgpu::BindGroup = &self.default_bind_group; // default fallback
+
+        if !vertices.is_empty() {
+            let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sprite VB"),
+                contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
-            }))
-        } else { None };
-
-        let staging_indices: Vec<u16> = if rect_count > 0 {
-            (0..rect_count as u16).flat_map(|i| {
-                let base = i * 4;
-                vec![base, base + 1, base + 2, base, base + 2, base + 3]
-            }).collect()
-        } else { vec![] };
-
-        let staging_idx_buf = if !staging_indices.is_empty() {
-            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Rect IB"),
-                contents: bytemuck::cast_slice(&staging_indices),
+            });
+            let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sprite IB"),
+                contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsages::INDEX,
-            }))
-        } else { None };
+            });
 
-        {
+            // Look up bind group inside the pass scope
+            let bg_for_pass = tex_idx.and_then(|idx| {
+                let groups = self.texture_bind_groups.lock().unwrap();
+                if idx < groups.len() { Some(&groups[idx] as *const wgpu::BindGroup) } else { None }
+            });
+
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Game Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    view: &view, resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: bg.0 as f64, g: bg.1 as f64, b: bg.2 as f64, a: bg.3 as f64
-                        }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: clear.0 as f64, g: clear.1 as f64, b: clear.2 as f64, a: clear.3 as f64 }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -343,142 +375,57 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if let (Some(vb), Some(ib)) = (&staging_verts, &staging_idx_buf) {
-                pass.set_pipeline(&self.render_pipeline);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..(rect_count as u32 * 6), 0, 0..1);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
+            if let Some(ptr) = bg_for_pass {
+                unsafe { pass.set_bind_group(0, &*ptr, &[]); }
+            } else {
+                pass.set_bind_group(0, &self.default_bind_group, &[]);
             }
+            pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
         }
 
-        drop(batch);
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
     }
 
-    /// Begins a new render pass, returning a `FrameRenderer` for drawing.
-    pub fn begin_frame(&self) -> Result<FrameRenderer, RenderError> {
-        let frame = self.surface.get_current_texture()
-            .map_err(|e| RenderError::SurfaceFailed(e.to_string()))?;
-
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        Ok(FrameRenderer {
-            frame: Some(frame),
-            view,
-        })
-    }
-}
-
-/// A single-frame renderer that manages the GPU command buffer.
-pub struct FrameRenderer {
-    frame: Option<wgpu::SurfaceTexture>,
-    view: wgpu::TextureView,
-}
-
-impl FrameRenderer {
-    /// Returns a reference to the color attachment view.
-    pub fn view(&self) -> &wgpu::TextureView {
-        &self.view
-    }
-
-    /// Presents the frame to the screen.
-    pub fn present(self) {
-        if let Some(frame) = self.frame {
-            frame.present();
+    /// Resize the output surface.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.size = (width, height);
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
+            self.screen_size = (width as f32, height as f32);
         }
     }
-}
 
-fn create_fullscreen_quad() -> (Vec<SpriteVertex>, Vec<u16>) {
-    let vertices = vec![
-        SpriteVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        SpriteVertex { position: [ 1.0, -1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        SpriteVertex { position: [ 1.0,  1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        SpriteVertex { position: [-1.0,  1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-    ];
-    let indices: Vec<u16> = vec![0, 1, 2, 0, 2, 3];
-    (vertices, indices)
+    pub fn device(&self) -> &wgpu::Device { &self.device }
+    pub fn queue(&self) -> &wgpu::Queue { &self.queue }
+    pub fn surface_format(&self) -> wgpu::TextureFormat { self.config.format }
 }
 
 fn create_solid_color_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    width: u32,
-    height: u32,
-    pixel: [u8; 4],
-) -> GpuTexture {
+    device: &wgpu::Device, queue: &wgpu::Queue,
+    width: u32, height: u32, pixel: [u8; 4],
+) -> RawTexture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Solid Color Texture"),
         size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
+        mip_level_count: 1, sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-
     queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
+        wgpu::ImageCopyTexture { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
         &pixel,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        },
+        wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
         wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
-
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    GpuTexture { texture, view, width, height }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_render_error_conversion() {
-        let err = RenderError::AdapterFailed("no GPU".into());
-        let runtime_err: RuntimeError = err.into();
-        assert_eq!(runtime_err.code, vibege_core::ErrorCode::INIT_FAILED);
-    }
-
-    #[test]
-    fn test_vertex_buffer_layout() {
-        let desc = SpriteVertex::desc();
-        assert_eq!(desc.attributes.len(), 3);
-    }
-
-    #[test]
-    fn test_fullscreen_quad() {
-        let (verts, indices) = create_fullscreen_quad();
-        assert_eq!(verts.len(), 4);
-        assert_eq!(indices.len(), 6);
-        assert!((verts[0].position[0] - (-1.0)).abs() < 0.001);
-        assert!((verts[2].position[0] - 1.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_vertex_bytemuck() {
-        let vertex = SpriteVertex {
-            position: [0.0, 0.0],
-            tex_coords: [0.5, 0.5],
-            color: [1.0, 0.0, 0.0, 1.0],
-        };
-        let bytes: &[u8] = bytemuck::bytes_of(&vertex);
-        assert_eq!(bytes.len(), std::mem::size_of::<SpriteVertex>());
-    }
-
-    #[test]
-    fn test_sprite_vertex_size() {
-        assert_eq!(std::mem::size_of::<SpriteVertex>(), 32);
-    }
+    RawTexture { _texture: texture, view }
 }

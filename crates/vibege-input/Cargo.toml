@@ -1,0 +1,15 @@
+[package]
+name = "vibege-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Input system — keyboard, mouse, gamepad abstraction"
+
+[dependencies]
+vibege-core = { path = "../vibege-core" }
+winit = "0.30"
+tracing = "0.1"
+thiserror = "2"
+
+[dev-dependencies]

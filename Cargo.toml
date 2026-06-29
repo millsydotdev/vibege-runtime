@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/vibege-core",
     "crates/vibege-window",
+    "crates/vibege-input",
 ]
 
 [workspace.package]

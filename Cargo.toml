@@ -4,6 +4,7 @@ members = [
     "crates/vibege-core",
     "crates/vibege-window",
     "crates/vibege-input",
+    "crates/vibege-renderer",
 ]
 
 [workspace.package]

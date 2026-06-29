@@ -1,0 +1,18 @@
+[package]
+name = "vibege-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GPU-accelerated 2D renderer using wgpu"
+
+[dependencies]
+vibege-core = { path = "../vibege-core" }
+winit = "0.30"
+wgpu = "22"
+image = "0.25"
+tracing = "0.1"
+thiserror = "2"
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]

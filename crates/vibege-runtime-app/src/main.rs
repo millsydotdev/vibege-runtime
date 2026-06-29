@@ -203,6 +203,15 @@ fn main() -> anyhow::Result<()> {
         }).expect("create clear")).expect("set clear");
     }
 
+    // draw_text(x, y, text, char_w, r, g, b) — bitmap text
+    {
+        let ren = Arc::clone(&renderer);
+        render_table.set("draw_text", lua.create_function(move |_, (x, y, text, char_w, r, g, b): (f32, f32, String, f32, f32, f32, f32)| {
+            ren.draw_text(x, y, &text, char_w, r, g, b);
+            Ok(())
+        }).expect("create draw_text")).expect("set draw_text");
+    }
+
     vibege.set("render", render_table).expect("set render");
 
     // Audio bindings
@@ -359,29 +368,20 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                if has_lua_game {
-                    // Game mode — call Lua update/render
-                    if let Ok(update_fn) = lua.globals().get::<Function>("update") {
-                        if let Err(e) = update_fn.call::<()>(dt) {
-                            error!("update(): {e}");
-                            elwt.exit();
-                            return;
-                        }
+                // Always call Lua update/render — the launcher IS a Lua game
+                if let Ok(update_fn) = lua.globals().get::<Function>("update") {
+                    if let Err(e) = update_fn.call::<()>(dt) {
+                        error!("update(): {e}");
+                        elwt.exit();
+                        return;
                     }
-                    if let Ok(render_fn) = lua.globals().get::<Function>("render") {
-                        if let Err(e) = render_fn.call::<()>(()) {
-                            error!("render(): {e}");
-                            elwt.exit();
-                            return;
-                        }
+                }
+                if let Ok(render_fn) = lua.globals().get::<Function>("render") {
+                    if let Err(e) = render_fn.call::<()>(()) {
+                        error!("render(): {e}");
+                        elwt.exit();
+                        return;
                     }
-                } else {
-                    // Launcher mode — show placeholder screen
-                    renderer.set_clear(0.05, 0.05, 0.15, 1.0);
-                    // Draw a simple title bar graphic
-                    renderer.draw_rect(100.0, 280.0, 600.0, 40.0, 0.3, 0.5, 0.9, 1.0);
-                    renderer.draw_rect(350.0, 320.0, 100.0, 4.0, 0.5, 0.7, 1.0, 0.5);
-                    // This is where the launcher game list would render
                 }
 
                 // Present everything after render

@@ -114,6 +114,7 @@ impl IpcMessage {
         }
     }
 
+    #[allow(dead_code)]
     fn error(&self, code: u32, message: &str) -> Self {
         Self {
             correlation_id: self.correlation_id,

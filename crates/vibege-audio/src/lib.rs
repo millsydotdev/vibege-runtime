@@ -7,8 +7,10 @@ use tracing::{debug, info, warn};
 /// Uses rodio for cross-platform audio playback.
 /// Sounds are loaded from WAV files and played with low latency.
 pub struct AudioSystem {
+    #[allow(dead_code)]
     stream: OutputStream,
     handle: OutputStreamHandle,
+    #[allow(dead_code)]
     music_volume: Mutex<f32>,
     sfx_volume: Mutex<f32>,
 }

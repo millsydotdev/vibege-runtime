@@ -5,6 +5,8 @@ use tracing::{debug, info};
 use vibege_core::RuntimeError;
 use wgpu::util::DeviceExt;
 
+mod font;
+
 /// Error types specific to rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
@@ -63,6 +65,8 @@ struct RawTexture {
 enum DrawCmd {
     Rect { x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32 },
     Sprite { tex_idx: usize, x: f32, y: f32, w: f32, h: f32 },
+    /// A single glyph from the font atlas with explicit UV sub-rect.
+    Glyph { x: f32, y: f32, w: f32, h: f32, u1: f32, v1: f32, u2: f32, v2: f32, r: f32, g: f32, b: f32 },
 }
 
 /// The GPU renderer.
@@ -78,6 +82,11 @@ pub struct Renderer {
 
     default_bind_group: wgpu::BindGroup,
     texture_bind_groups: Mutex<Vec<wgpu::BindGroup>>,
+
+    font_bind_group: wgpu::BindGroup,   // bitmap font atlas
+    font_tex_w: u32,                     // font atlas width in pixels
+    font_tex_h: u32,                     // font atlas height in pixels
+    font_chars_per_row: u32,             // glyphs per row in atlas
 
     draw_list: Mutex<Vec<DrawCmd>>,
     clear_color: Mutex<(f32, f32, f32, f32)>,
@@ -210,11 +219,44 @@ impl Renderer {
             ],
         });
 
+        // Create font atlas texture from embedded bitmap font
+        let font_rgba = font::font_atlas_rgba();
+        let font_w = 128u32;
+        let font_h = 48u32;
+        let font_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Font Atlas"),
+            size: wgpu::Extent3d { width: font_w, height: font_h, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &font_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &font_rgba,
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * font_w), rows_per_image: Some(font_h) },
+            wgpu::Extent3d { width: font_w, height: font_h, depth_or_array_layers: 1 },
+        );
+        let font_view = font_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let font_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Font BG"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&font_view) },
+            ],
+        });
+
         info!(width = size.0, height = size.1, format = ?config.format, "Renderer initialised");
 
         Ok(Self {
             surface, device, queue, config, size, pipeline, bind_group_layout, sampler,
             default_bind_group,
+            font_bind_group,
+            font_tex_w: font_w,
+            font_tex_h: font_h,
+            font_chars_per_row: 16,
             texture_bind_groups: Mutex::new(Vec::new()),
             draw_list: Mutex::new(Vec::new()),
             clear_color: Mutex::new((0.0, 0.0, 0.0, 1.0)),
@@ -287,6 +329,36 @@ impl Renderer {
         self.draw_list.lock().unwrap().push(DrawCmd::Sprite { tex_idx, x, y, w, h });
     }
 
+    /// Draw text using the embedded 8×8 monospace bitmap font.
+    /// `char_w` = width in pixels of one character (e.g. 8.0 for 1:1 scale, 16.0 for 2x).
+    /// Character height = `char_w * 1.0` (square glyphs).
+    /// Only ASCII 32–126 is supported; out-of-range chars render as space.
+    pub fn draw_text(&self, x: f32, y: f32, text: &str, char_w: f32, r: f32, g: f32, b: f32) {
+        let char_h = char_w; // square glyphs
+        let atlas_w = self.font_tex_w as f32;
+        let atlas_h = self.font_tex_h as f32;
+        let glyph_uv_w = 8.0 / atlas_w; // each glyph is 8×8 pixels in the atlas
+        let glyph_uv_h = 8.0 / atlas_h;
+
+        let mut list = self.draw_list.lock().unwrap();
+        for (i, ch) in text.chars().enumerate() {
+            let mut code = ch as u8;
+            if code < b' ' || code > b'~' { code = b' '; }
+            let local_idx = (code - b' ') as u32;
+            let col = local_idx % self.font_chars_per_row;
+            let row = local_idx / self.font_chars_per_row;
+            let u1 = col as f32 * glyph_uv_w;
+            let v1 = row as f32 * glyph_uv_h;
+            let u2 = u1 + glyph_uv_w;
+            let v2 = v1 + glyph_uv_h;
+            let gx = x + i as f32 * char_w;
+            list.push(DrawCmd::Glyph {
+                x: gx, y, w: char_w, h: char_h,
+                u1, v1, u2, v2, r, g, b,
+            });
+        }
+    }
+
     /// Set the background clear color.
     pub fn set_clear(&self, r: f32, g: f32, b: f32, a: f32) {
         *self.clear_color.lock().unwrap() = (r, g, b, a);
@@ -300,6 +372,21 @@ impl Renderer {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
+        });
+
+        // Always begin a render pass — clears the screen even with zero draw calls
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Game Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view, resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: clear.0 as f64, g: clear.1 as f64, b: clear.2 as f64, a: clear.3 as f64 }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
         });
 
         let mut vertices: Vec<SpriteVertex> = Vec::new();
@@ -336,13 +423,22 @@ impl Renderer {
                     indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
                     tex_id_for_batch = Some(*tex_idx);
                 }
+                DrawCmd::Glyph { x, y, w, h, u1, v1, u2, v2, r, g, b } => {
+                    let x1 = (*x / sw) * 2.0 - 1.0;
+                    let y1 = 1.0 - (*y / sh) * 2.0;
+                    let x2 = ((*x + *w) / sw) * 2.0 - 1.0;
+                    let y2 = 1.0 - ((*y + *h) / sh) * 2.0;
+                    let base = vertices.len() as u16;
+                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [*u1, *v1], color: [*r, *g, *b, 1.0] });
+                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [*u2, *v1], color: [*r, *g, *b, 1.0] });
+                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [*u2, *v2], color: [*r, *g, *b, 1.0] });
+                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [*u1, *v2], color: [*r, *g, *b, 1.0] });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    // Glyphs use the font atlas bind group (tex_idx = special sentinel)
+                    tex_id_for_batch = Some(usize::MAX);
+                }
             }
         }
-
-        // Get the bind group for the texture (or default white)
-        // Get bind group by index. Store index to look up later.
-        let tex_idx = tex_id_for_batch;
-        let _bg: &wgpu::BindGroup = &self.default_bind_group; // default fallback
 
         if !vertices.is_empty() {
             let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -356,36 +452,27 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-            // Look up bind group inside the pass scope
-            let bg_for_pass = tex_idx.and_then(|idx| {
-                let groups = self.texture_bind_groups.lock().unwrap();
-                if idx < groups.len() { Some(&groups[idx] as *const wgpu::BindGroup) } else { None }
-            });
-
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Game Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view, resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: clear.0 as f64, g: clear.1 as f64, b: clear.2 as f64, a: clear.3 as f64 }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
             pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
-            if let Some(ptr) = bg_for_pass {
-                unsafe { pass.set_bind_group(0, &*ptr, &[]); }
-            } else {
-                pass.set_bind_group(0, &self.default_bind_group, &[]);
+
+            // Resolve bind group — usize::MAX = font atlas, otherwise texture index
+            match tex_id_for_batch {
+                Some(usize::MAX) => pass.set_bind_group(0, &self.font_bind_group, &[]),
+                Some(idx) => {
+                    let groups = self.texture_bind_groups.lock().unwrap();
+                    if idx < groups.len() {
+                        pass.set_bind_group(0, &groups[idx], &[]);
+                    } else {
+                        pass.set_bind_group(0, &self.default_bind_group, &[]);
+                    }
+                }
+                None => pass.set_bind_group(0, &self.default_bind_group, &[]),
             }
             pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
         }
 
+        drop(pass);
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())

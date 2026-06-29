@@ -16,15 +16,12 @@
 //! - v1.0: Suspend <10ms, Resume <50ms
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use vibege_core::{ErrorCode, Result, RuntimeError};
-use vibege_ipc::IpcMessage;
 
 /// Current version of the snapshot format.
 const SNAPSHOT_FORMAT_VERSION: u32 = 1;
@@ -172,6 +169,9 @@ impl SuspensionEngine {
     pub fn suspend(&mut self, game_state: &[u8], game_time_secs: f64, label: &str) -> Result<SnapshotMeta> {
         let start = Instant::now();
 
+        // Compute checksum from game state before serializing the full snapshot
+        let checksum = simple_hash(game_state);
+
         let snapshot = Snapshot {
             format_version: SNAPSHOT_FORMAT_VERSION,
             created_at: iso_timestamp(),
@@ -179,7 +179,7 @@ impl SuspensionEngine {
             game_state: game_state.to_vec(),
             asset_references: HashMap::new(),
             render_state: RenderState::default(),
-            checksum: String::new(),
+            checksum: checksum.clone(),
         };
 
         // Serialise to JSON (in v0.1; will use MessagePack/binary in v1)
@@ -189,9 +189,6 @@ impl SuspensionEngine {
                 "Failed to serialise snapshot",
                 e,
             ))?;
-
-        // Compute checksum (simple hash for v0.1)
-        let checksum = simple_hash(&serialised);
 
         // Write to disk
         let snapshot_id = format!("snap-{}", chrono_hash());

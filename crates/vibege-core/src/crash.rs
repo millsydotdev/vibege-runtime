@@ -98,22 +98,10 @@ fn write_crash_report(dir: &PathBuf, report: &CrashReport) -> Result<(), Box<dyn
 }
 
 fn chrono_now() -> String {
-    // Simple timestamp without pulling in chrono crate
-    let now = std::time::SystemTime::now()
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let nanos = now.subsec_nanos();
-
-    // Compute date/time components from Unix timestamp (simplified)
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    // Use a fixed epoch-based date to avoid chrono dependency
-    format!("{days}d{hours:02}h{minutes:02}m{seconds:02}s.{nanos:09}ns")
+        .map(|d| format!("{}", d.as_secs_f64()))
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 #[cfg(test)]

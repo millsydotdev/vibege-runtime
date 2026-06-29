@@ -257,6 +257,7 @@ impl WindowManager {
     pub fn run_event_loop(mut self) -> Result<(), WindowError> {
         let window = Arc::clone(&self.window);
         let shutdown = Arc::clone(&self.request_shutdown);
+        let mut handler = self.event_handler.take();
 
         let event_loop = self.event_loop.take()
             .ok_or_else(|| WindowError::EventLoopError("Event loop already consumed".into()))?;
@@ -266,6 +267,27 @@ impl WindowManager {
                 info!("Window shutdown requested");
                 elwt.exit();
                 return;
+            }
+
+            // Notify event handler if set
+            if let Some(ref mut h) = handler {
+                match &event {
+                    winit::event::Event::WindowEvent { event, .. } => {
+                        match event {
+                            winit::event::WindowEvent::Resized(size) => {
+                                h.on_window_event(&WindowEvent::Resized { width: size.width, height: size.height });
+                            }
+                            winit::event::WindowEvent::Focused(true) => {
+                                h.on_window_event(&WindowEvent::Focused);
+                            }
+                            winit::event::WindowEvent::Focused(false) => {
+                                h.on_window_event(&WindowEvent::Blurred);
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
             }
 
             match event {

@@ -25,8 +25,6 @@ pub struct MetricsRegistry {
     started_at: Instant,
     frame_count: AtomicU64,
     last_frame_time_ns: AtomicU64,
-    fps_accumulator: AtomicU64,
-    fps_frame_count: AtomicU64,
     counters: std::sync::RwLock<HashMap<String, u64>>,
     gauges: std::sync::RwLock<HashMap<String, f64>>,
     peak_memory_kb: AtomicU64,
@@ -34,31 +32,25 @@ pub struct MetricsRegistry {
 }
 
 impl MetricsRegistry {
-    /// Creates a new metrics registry and starts the FPS counter.
+    /// Creates a new metrics registry.
     pub fn new() -> Arc<Self> {
-        let registry = Arc::new(Self {
+        Arc::new(Self {
             started_at: Instant::now(),
             frame_count: AtomicU64::new(0),
             last_frame_time_ns: AtomicU64::new(0),
-            fps_accumulator: AtomicU64::new(0),
-            fps_frame_count: AtomicU64::new(0),
             counters: std::sync::RwLock::new(HashMap::new()),
             gauges: std::sync::RwLock::new(HashMap::new()),
             peak_memory_kb: AtomicU64::new(0),
             running: AtomicBool::new(true),
-        });
-
-        registry.start_fps_ticker();
-        registry
+        })
     }
 
     /// Records a frame with its duration in seconds.
+    /// Thread-safe. FPS is calculated from last frame time to avoid race conditions.
     pub fn record_frame(&self, delta_seconds: f64) {
         self.frame_count.fetch_add(1, Ordering::Relaxed);
         let ns = (delta_seconds * 1_000_000_000.0) as u64;
         self.last_frame_time_ns.store(ns, Ordering::Relaxed);
-        self.fps_accumulator.fetch_add(ns, Ordering::Relaxed);
-        self.fps_frame_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increments a named counter by 1.
@@ -92,14 +84,8 @@ impl MetricsRegistry {
         let frame_count = self.frame_count.load(Ordering::Relaxed);
         let last_frame_ms = self.last_frame_time_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0;
 
-        // Compute FPS from the accumulated frame times
-        let total_ns = self.fps_accumulator.load(Ordering::Relaxed);
-        let frame_count_for_fps = self.fps_frame_count.load(Ordering::Relaxed);
-        let fps = if total_ns > 0 && frame_count_for_fps > 0 {
-            (frame_count_for_fps as f64) / (total_ns as f64 / 1_000_000_000.0)
-        } else {
-            0.0
-        };
+        // Compute FPS from last frame time (avoids race conditions with accumulators)
+        let fps = if last_frame_ms > 0.0 { 1000.0 / last_frame_ms } else { 0.0 };
 
         MetricsSnapshot {
             uptime_secs: uptime.as_secs_f64(),
@@ -118,23 +104,6 @@ impl MetricsRegistry {
         self.running.store(false, Ordering::Relaxed);
     }
 
-    fn start_fps_ticker(self: &Arc<Self>) {
-        let registry = Arc::downgrade(self);
-        std::thread::Builder::new()
-            .name("metrics-ticker".into())
-            .spawn(move || {
-                // Sleep 1 second, then reset the FPS counter
-                while let Some(r) = registry.upgrade() {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    if !r.running.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    r.fps_accumulator.store(0, Ordering::Relaxed);
-                    r.fps_frame_count.store(0, Ordering::Relaxed);
-                }
-            })
-            .expect("Failed to spawn metrics ticker thread");
-    }
 }
 
 #[cfg(test)]

@@ -254,7 +254,7 @@ impl App {
     /// Installs OS signal handlers for graceful shutdown and suspend/resume.
     fn install_signal_handlers(&self) -> Result<()> {
         let shutdown_flag = Arc::clone(&self.shutdown_requested);
-        let suspend_flag = Arc::clone(&self.suspend_requested);
+        let _suspend_flag = Arc::clone(&self.suspend_requested);
 
         #[cfg(unix)]
         {
@@ -285,11 +285,39 @@ impl App {
 
         #[cfg(windows)]
         {
-            // Windows uses SetConsoleCtrlHandler via a separate mechanism.
-            // For v0.1, we use a simple polling approach.
-            let _ = shutdown_flag;
-            let _ = suspend_flag;
-            tracing::warn!("Windows signal handling not yet implemented, using polling");
+            // Windows console signal handling uses a static callback approach.
+            // SetConsoleCtrlHandler requires an extern "system" fn, not a closure.
+            // We use a static atomic bool that the handler sets on Ctrl+C/Ctrl+Break.
+            static CTRL_C_PRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+            // Link the shutdown flag to the static by watching it in the main loop
+            // The handler simply sets the static flag
+            extern "system" fn console_ctrl_handler(_: u32) -> i32 {
+                CTRL_C_PRESSED.store(true, std::sync::atomic::Ordering::SeqCst);
+                1 // TRUE = handled
+            }
+
+            match unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(
+                Some(console_ctrl_handler), 1
+            ) } {
+                0 => tracing::warn!("Failed to register console control handler"),
+                _ => tracing::debug!("Console control handler registered"),
+            }
+
+            // Watch the static flag and propagate to the runtime's shutdown flag
+            let shutdown = Arc::clone(&shutdown_flag);
+            std::thread::Builder::new()
+                .name("console-ctrl-watcher".into())
+                .spawn(move || {
+                    while !shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        if CTRL_C_PRESSED.load(std::sync::atomic::Ordering::SeqCst) {
+                            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                })
+                .ok();
         }
 
         tracing::debug!("Signal handlers installed");

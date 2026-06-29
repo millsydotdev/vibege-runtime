@@ -6,6 +6,7 @@
 //! with a simple API. Integrates with the WindowManager's native window.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use tracing::{debug, info};
 use vibege_core::RuntimeError;
@@ -78,6 +79,8 @@ pub struct Renderer {
     num_indices: u32,
     sampler: wgpu::Sampler,
     default_texture: GpuTexture,
+    rect_batch: Mutex<Vec<SpriteVertex>>,
+    screen_size: (f32, f32),
 }
 
 impl Renderer {
@@ -231,6 +234,8 @@ impl Renderer {
             num_indices,
             sampler,
             default_texture,
+            rect_batch: Mutex::new(Vec::new()),
+            screen_size: (size.0 as f32, size.1 as f32),
         })
     }
 
@@ -260,25 +265,71 @@ impl Renderer {
         }
     }
 
-    /// Clears the screen with the given color and presents it.
-    pub fn clear(&self, r: f32, g: f32, b: f32, a: f32) -> Result<(), RenderError> {
+    /// Records a colored rectangle for the next frame.
+    /// Coordinates are in screen space (0,0 = top-left).
+    pub fn draw_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
+        let (sw, sh) = self.screen_size;
+        // Convert screen coords to NDC (-1 to 1)
+        let x1 = (x / sw) * 2.0 - 1.0;
+        let y1 = 1.0 - (y / sh) * 2.0;
+        let x2 = ((x + w) / sw) * 2.0 - 1.0;
+        let y2 = 1.0 - ((y + h) / sh) * 2.0;
+
+        let mut batch = self.rect_batch.lock().unwrap();
+        batch.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [r, g, b, a] });
+        batch.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [r, g, b, a] });
+        batch.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [r, g, b, a] });
+        batch.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [r, g, b, a] });
+    }
+
+    /// Renders all queued rectangles and presents the frame.
+    /// Clears with the given background color first.
+    pub fn present(&self, bg_r: f32, bg_g: f32, bg_b: f32, bg_a: f32) -> Result<(), RenderError> {
         let frame = self.surface.get_current_texture()
             .map_err(|e| RenderError::SurfaceFailed(e.to_string()))?;
 
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Clear Encoder"),
+            label: Some("Render Encoder"),
         });
+
+        let mut batch = self.rect_batch.lock().unwrap();
+        let rect_count = batch.len();
+
+        // Create vertex buffer from batch
+        let staging_verts = if rect_count > 0 {
+            let verts: Vec<SpriteVertex> = batch.drain(..).collect();
+            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Rect VB"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            }))
+        } else { None };
+
+        // Create index buffer for the batch
+        let staging_indices: Vec<u16> = if rect_count > 0 {
+            (0..rect_count as u16).flat_map(|i| {
+                let base = i * 4;
+                vec![base, base + 1, base + 2, base, base + 2, base + 3]
+            }).collect()
+        } else { vec![] };
+
+        let staging_idx_buf = if !staging_indices.is_empty() {
+            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Rect IB"),
+                contents: bytemuck::cast_slice(&staging_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }))
+        } else { None };
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Clear Pass"),
+                label: Some("Game Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: a as f64 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: bg_r as f64, g: bg_g as f64, b: bg_b as f64, a: bg_a as f64 }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -286,16 +337,25 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pass.draw_indexed(0..self.num_indices, 0, 0..1);
+
+            if let (Some(vb), Some(ib)) = (&staging_verts, &staging_idx_buf) {
+                pass.set_pipeline(&self.render_pipeline);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..(rect_count as u32 * 6), 0, 0..1);
+            }
         }
 
+        drop(batch);
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
-
         Ok(())
+    }
+
+    /// Clears the screen with the given color and presents it (simple path).
+    /// For backward compatibility — use present() for game rendering.
+    pub fn clear(&self, r: f32, g: f32, b: f32, a: f32) -> Result<(), RenderError> {
+        self.present(r, g, b, a)
     }
 
     /// Begins a new render pass, returning a `FrameRenderer` for drawing.

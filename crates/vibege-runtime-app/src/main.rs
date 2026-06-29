@@ -122,10 +122,15 @@ fn main() -> anyhow::Result<()> {
     // Render bindings
     let render_table = lua.create_table().expect("create render table");
     let ren = Arc::clone(&renderer);
-    render_table.set("clear", lua.create_function(move |_, (r, g, b, a): (f32, f32, f32, f32)| {
-        let _ = ren.clear(r, g, b, a);
+    render_table.set("draw_rect", lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
+        ren.draw_rect(x, y, w, h, r, g, b, a);
         Ok(())
-    }).expect("create clear")).expect("set");
+    }).expect("create draw_rect")).expect("set draw_rect");
+    let ren2 = Arc::clone(&renderer);
+    render_table.set("clear", lua.create_function(move |_, (bg_r, bg_g, bg_b, bg_a): (f32, f32, f32, f32)| {
+        let _ = ren2.present(bg_r, bg_g, bg_b, bg_a);
+        Ok(())
+    }).expect("create clear")).expect("set clear");
     vibege.set("render", render_table).expect("set render");
 
     // Audio bindings

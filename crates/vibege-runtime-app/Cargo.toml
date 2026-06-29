@@ -1,0 +1,24 @@
+[package]
+name = "vibege-runtime-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VibeGE Runtime — the native desktop application binary"
+
+[[bin]]
+name = "vibege-runtime"
+path = "src/main.rs"
+
+[dependencies]
+vibege-core = { path = "../vibege-core" }
+vibege-input = { path = "../vibege-input" }
+vibege-renderer = { path = "../vibege-renderer" }
+
+winit = "0.30"
+mlua = { version = "0.10", features = ["luau"] }
+pollster = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"

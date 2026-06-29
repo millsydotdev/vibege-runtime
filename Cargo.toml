@@ -8,6 +8,7 @@ members = [
     "crates/vibege-ipc",
     "crates/vibege-sandbox",
     "crates/vibege-suspension",
+    "crates/vibege-runtime-app",
 ]
 
 [workspace.package]

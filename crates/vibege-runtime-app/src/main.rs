@@ -119,7 +119,7 @@ fn main() -> anyhow::Result<()> {
     }
     vibege.set("input", input_table).expect("set input");
 
-    // Render bindings
+    // Render bindings — deferred rendering
     let render_table = lua.create_table().expect("create render table");
     let ren = Arc::clone(&renderer);
     render_table.set("draw_rect", lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
     }).expect("create draw_rect")).expect("set draw_rect");
     let ren2 = Arc::clone(&renderer);
     render_table.set("clear", lua.create_function(move |_, (bg_r, bg_g, bg_b, bg_a): (f32, f32, f32, f32)| {
-        let _ = ren2.present(bg_r, bg_g, bg_b, bg_a);
+        ren2.set_clear(bg_r, bg_g, bg_b, bg_a);
         Ok(())
     }).expect("create clear")).expect("set clear");
     vibege.set("render", render_table).expect("set render");
@@ -249,13 +249,18 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // render()
+                // render() — game calls clear + draw_rect
                 if let Ok(render_fn) = lua.globals().get::<Function>("render") {
                     if let Err(e) = render_fn.call::<()>(()) {
                         error!("render(): {e}");
                         elwt.exit();
                         return;
                     }
+                }
+
+                // Present everything after game render
+                if let Err(e) = renderer.render() {
+                    error!("GPU render: {e}");
                 }
 
                 input.lock().unwrap().end_frame();

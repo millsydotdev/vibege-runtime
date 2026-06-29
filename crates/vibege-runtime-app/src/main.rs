@@ -62,7 +62,22 @@ fn main() -> anyhow::Result<()> {
     );
 
     if cli.overlay {
-        info!("Overlay mode enabled — game stays on top of editor");
+        // Make window topmost via Windows API
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOSIZE, SWP_NOMOVE};
+            use windows_sys::Win32::Foundation::HWND;
+            if let Ok(handle) = window.window_handle() {
+                if let RawWindowHandle::Win32(w32) = handle.as_ref() {
+                    let hwnd = w32.hwnd.get() as HWND;
+                    unsafe {
+                        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+                    }
+                }
+            }
+        }
+        info!("Overlay mode enabled — always on top");
     }
 
     // GPU

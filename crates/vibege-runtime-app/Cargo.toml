@@ -22,3 +22,5 @@ pollster = "0.4"
 tracing = "0.1"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+raw-window-handle = "0.6"

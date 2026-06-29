@@ -12,7 +12,6 @@ use vibege_suspension::{SuspensionConfig, SuspensionEngine};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::event_loop::EventLoopBuilder;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 #[derive(Parser)]
@@ -293,11 +292,20 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // Handle hotkey toggle
+                // Handle tray signals
+                if vibege_tray::should_show_launcher() {
+                    info!("Launcher requested — would show game store");
+                    window.set_visible(true);
+                }
                 if vibege_tray::should_toggle_overlay() {
                     let visible = window.is_visible().unwrap_or(true);
                     window.set_visible(!visible);
                     info!(visible = !visible, "Overlay toggled via hotkey");
+                }
+                if vibege_tray::should_quit() {
+                    info!("Quit requested from tray");
+                    elwt.exit();
+                    return;
                 }
                 // Check if we have a saved state to restore
                 let snap_id = suspension.list_snapshots().first().map(|s| s.id.clone());

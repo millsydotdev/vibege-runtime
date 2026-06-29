@@ -1,0 +1,19 @@
+[package]
+name = "vibege-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sandbox — OS-level process isolation for game execution"
+
+[dependencies]
+vibege-core = { path = "../vibege-core" }
+tracing = "0.1"
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+
+[target.'cfg(windows)'.dependencies]
+
+[dev-dependencies]
+tempfile = "3"

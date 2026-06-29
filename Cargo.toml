@@ -6,6 +6,7 @@ members = [
     "crates/vibege-input",
     "crates/vibege-renderer",
     "crates/vibege-ipc",
+    "crates/vibege-sandbox",
 ]
 
 [workspace.package]

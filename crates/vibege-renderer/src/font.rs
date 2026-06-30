@@ -144,12 +144,6 @@ pub fn font_atlas_rgba() -> Vec<u8> {
     pixels
 }
 
-/// Calculate the pixel width of a string at a given pixel-per-char scale.
-#[allow(dead_code)]
-pub fn text_width(text: &str, char_w: f32) -> f32 {
-    text.chars().count() as f32 * char_w
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,10 +191,4 @@ mod tests {
         assert_eq!(FONT_BITS.len(), count * 8);
     }
 
-    #[test]
-    fn test_text_width_calculation() {
-        assert_eq!(text_width("Hi", 8.0), 16.0);
-        assert_eq!(text_width("Hello", 10.0), 50.0);
-        assert_eq!(text_width("", 8.0), 0.0);
-    }
 }

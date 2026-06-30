@@ -6,9 +6,11 @@ use tracing::{info, warn};
 ///
 /// Uses rodio for cross-platform audio playback.
 pub struct AudioSystem {
+    /// Kept alive for the lifetime of AudioSystem — dropping it stops audio.
     #[allow(dead_code)]
     stream: OutputStream,
     handle: OutputStreamHandle,
+    /// Reserved for future music volume control.
     #[allow(dead_code)]
     music_volume: Mutex<f32>,
     sfx_volume: Mutex<f32>,

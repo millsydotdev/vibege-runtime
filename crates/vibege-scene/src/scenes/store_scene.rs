@@ -2,24 +2,6 @@ use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use std::io::Read;
 use tracing::info;
 
-fn fetch_registry(backend: &str, search: &str) -> Result<Vec<serde_json::Value>, String> {
-    let url = if search.is_empty() {
-        format!("{backend}/registry?limit=50")
-    } else {
-        format!("{backend}/registry?limit=50&search={}", urlencoding(search))
-    };
-    let mut body = String::new();
-    ureq::get(&url)
-        .call()
-        .map_err(|e| format!("HTTP: {e}"))?
-        .into_body()
-        .into_reader()
-        .read_to_string(&mut body)
-        .map_err(|e| format!("Read: {e}"))?;
-    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("JSON: {e}"))?;
-    Ok(json["packages"].as_array().cloned().unwrap_or_default())
-}
-
 fn urlencoding(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -244,20 +226,7 @@ impl Scene for StoreScene {
                 }
             }
             if enter && !self.search.is_empty() {
-                self.loading = true;
-                let bk = self.backend.clone();
-                let q = self.search.clone();
-                match fetch_registry(&bk, &q) {
-                    Ok(games) => {
-                        self.games = games;
-                        self.loading = false;
-                        self.selection = 0;
-                    }
-                    Err(e) => {
-                        self.error = Some(e);
-                        self.loading = false;
-                    }
-                }
+                self.fetch(0);
             }
             return Ok(SceneAction::Continue);
         }

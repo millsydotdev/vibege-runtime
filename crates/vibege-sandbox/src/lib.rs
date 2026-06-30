@@ -157,10 +157,7 @@ impl Sandbox {
         self.spawn_windows()?;
 
         if let Some(ref child) = self.child {
-            info!(
-                pid = child.id(),
-                "Sandboxed game process started"
-            );
+            info!(pid = child.id(), "Sandboxed game process started");
         }
 
         Ok(())
@@ -189,12 +186,16 @@ impl Sandbox {
         cmd.env("VIBEGE_SANDBOXED", "1");
         cmd.env("VIBEGE_SANDBOX_NAME", &config.name);
 
-        let child = cmd.spawn()
-            .map_err(|e| RuntimeError::with_cause(
+        let child = cmd.spawn().map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INIT_FAILED,
-                format!("Failed to spawn game process: {}", config.game_path.display()),
+                format!(
+                    "Failed to spawn game process: {}",
+                    config.game_path.display()
+                ),
                 e,
-            ))?;
+            )
+        })?;
 
         self.child = Some(child);
         Ok(())
@@ -224,12 +225,16 @@ impl Sandbox {
         // 2. Create a restricted token (remove dangerous privileges)
         // 3. Set memory and process limits on the job
 
-        let child = cmd.spawn()
-            .map_err(|e| RuntimeError::with_cause(
+        let child = cmd.spawn().map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INIT_FAILED,
-                format!("Failed to spawn game process: {}", config.game_path.display()),
+                format!(
+                    "Failed to spawn game process: {}",
+                    config.game_path.display()
+                ),
                 e,
-            ))?;
+            )
+        })?;
 
         self.child = Some(child);
         Ok(())

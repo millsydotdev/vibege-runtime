@@ -113,17 +113,6 @@ impl IpcMessage {
             error: None,
         }
     }
-
-    #[allow(dead_code)]
-    fn error(&self, code: u32, message: &str) -> Self {
-        Self {
-            correlation_id: self.correlation_id,
-            direction: MessageDirection::Response,
-            kind: MessageKind::Error,
-            payload: String::new(),
-            error: Some(IpcError { code, message: message.to_string() }),
-        }
-    }
 }
 
 // ─── Connection Management ─────────────────────────────────────────
@@ -170,7 +159,10 @@ pub struct IpcTransport {
 impl IpcTransport {
     /// Creates a new IPC transport.
     pub fn new(is_listener: bool, address: &str) -> Self {
-        Self { is_listener, address: address.to_string() }
+        Self {
+            is_listener,
+            address: address.to_string(),
+        }
     }
 
     /// Returns the IPC address.
@@ -260,15 +252,21 @@ impl IpcConnection {
             MessageKind::Ping => {
                 message.response(serde_json::json!({"status": "ok"}).to_string().as_str())
             }
-            MessageKind::Init => {
-                message.response(serde_json::json!({
+            MessageKind::Init => message.response(
+                serde_json::json!({
                     "status": "ok",
                     "session_id": format!("session-{}", message.correlation_id),
-                }).to_string().as_str())
-            }
+                })
+                .to_string()
+                .as_str(),
+            ),
             _ => {
                 // Default: echo back an acknowledgment
-                message.response(serde_json::json!({"status": "received"}).to_string().as_str())
+                message.response(
+                    serde_json::json!({"status": "received"})
+                        .to_string()
+                        .as_str(),
+                )
             }
         };
 
@@ -296,11 +294,12 @@ impl IpcConnection {
     /// Receives a pending response by correlation ID.
     pub fn receive_response(&self, correlation_id: CorrelationId) -> Result<IpcMessage> {
         let mut pending = self.pending_responses.lock().unwrap();
-        pending.remove(&correlation_id)
-            .ok_or_else(|| RuntimeError::new(
+        pending.remove(&correlation_id).ok_or_else(|| {
+            RuntimeError::new(
                 ErrorCode::INTERNAL,
                 format!("No pending response for correlation ID {correlation_id}"),
-            ))
+            )
+        })
     }
 
     /// Processes an incoming message through the handler.
@@ -341,8 +340,13 @@ mod tests {
 
     #[test]
     fn test_message_error() {
-        let req = IpcMessage::new(MessageKind::Ping, "");
-        let err = req.error(400, "Bad request");
+        let err = IpcMessage {
+            correlation_id: 1,
+            direction: MessageDirection::Response,
+            kind: MessageKind::Error,
+            payload: String::new(),
+            error: Some(IpcError { code: 400, message: "Bad request".into() }),
+        };
         assert_eq!(err.direction, MessageDirection::Response);
         assert_eq!(err.kind, MessageKind::Error);
         assert!(err.error.is_some());
@@ -392,8 +396,7 @@ mod tests {
     #[test]
     fn test_timeout_configuration() {
         let transport = create_test_transport();
-        let conn = IpcConnection::new(transport)
-            .with_timeout(Duration::from_millis(100));
+        let conn = IpcConnection::new(transport).with_timeout(Duration::from_millis(100));
         // Timeout is stored; real implementation would enforce it
         assert_eq!(conn.timeout, Duration::from_millis(100));
     }
@@ -401,8 +404,7 @@ mod tests {
     #[test]
     fn test_max_message_size() {
         let transport = create_test_transport();
-        let conn = IpcConnection::new(transport)
-            .with_max_message_size(512);
+        let conn = IpcConnection::new(transport).with_max_message_size(512);
         assert_eq!(conn.max_message_size, 512);
     }
 

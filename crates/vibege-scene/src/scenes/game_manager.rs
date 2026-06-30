@@ -1,12 +1,14 @@
-use mlua::{Function, Lua};
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use mlua::{Function, Lua};
 use tracing::{info, warn};
 use vibege_asset::AssetManager;
 use vibege_audio::AudioSystem;
 use vibege_core::{EventBus, RuntimeEvent};
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
+use vibege_sdk::SdkState;
 
 /// A live game session with its own isolated Lua VM.
 pub struct GameSession {
@@ -15,6 +17,7 @@ pub struct GameSession {
     has_render: bool,
     game_name: String,
     event_bus: Option<Arc<EventBus>>,
+    sdk_state: Arc<Mutex<SdkState>>,
 }
 
 impl Drop for GameSession {
@@ -39,10 +42,9 @@ impl GameSession {
         screen_width: u32,
         screen_height: u32,
         engine_version: &str,
+        sdk_state: &Arc<Mutex<SdkState>>,
     ) -> Result<Self, String> {
         let lua = Lua::new();
-
-        // Sandbox: remove dangerous globals from the Lua environment
         sandbox_lua(&lua);
 
         let vibege = vibege_sdk::register_game_api(
@@ -55,6 +57,7 @@ impl GameSession {
             screen_width,
             screen_height,
             engine_version,
+            sdk_state,
         )?;
         lua.globals()
             .set("vibege", vibege)
@@ -86,10 +89,12 @@ impl GameSession {
             has_render,
             game_name: game_name.to_string(),
             event_bus: eb,
+            sdk_state: Arc::clone(sdk_state),
         })
     }
 
     pub fn update(&self, dt: f64) -> Result<(), String> {
+        SdkState::tick(&self.sdk_state, dt);
         if self.has_update {
             if let Ok(update_fn) = self.lua.globals().get::<Function>("update") {
                 update_fn
@@ -143,9 +148,6 @@ impl GameSession {
 }
 
 /// Remove dangerous global functions from the Lua environment.
-///
-/// Luau (used by mlua) does not include `io`, `os`, `loadfile`, or `dofile`
-/// by default, but we explicitly nil them to be safe and future-proof.
 fn sandbox_lua(lua: &mlua::Lua) {
     let globals = lua.globals();
     let dangerous = [

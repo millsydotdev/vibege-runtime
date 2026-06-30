@@ -11,6 +11,7 @@ use super::state::RuntimeState;
 use super::validator::{PackageValidator, ValidationReport};
 
 use crate::scenes::game_manager::GameSession;
+use vibege_sdk::SdkState;
 
 /// Controls the lifecycle of a single game session.
 ///
@@ -103,6 +104,7 @@ impl SessionController {
         let audio = self.ctx.audio.clone();
         let assets = Arc::clone(&self.ctx.assets);
 
+        let sdk_state = SdkState::new();
         let session = GameSession::load(
             &self.ctx.game_name,
             &self.ctx.source,
@@ -114,6 +116,7 @@ impl SessionController {
             800,
             600,
             "0.2.0-alpha.1",
+            &sdk_state,
         )
         .map_err(RuntimeError::SdkRegistrationFailed)?;
 

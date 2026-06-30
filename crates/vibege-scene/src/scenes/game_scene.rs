@@ -1,12 +1,16 @@
+use std::sync::{Arc, Mutex};
+
 use super::game_manager::GameSession;
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use tracing::info;
+use vibege_sdk::SdkState;
 
 pub struct GameScene {
     session: Option<GameSession>,
     game_source: String,
     game_name: String,
     snapshot_id: Option<String>,
+    sdk_state: Arc<Mutex<SdkState>>,
 }
 
 impl GameScene {
@@ -16,6 +20,7 @@ impl GameScene {
             game_source: source,
             game_name,
             snapshot_id: None,
+            sdk_state: SdkState::new(),
         }
     }
 }
@@ -39,6 +44,7 @@ impl Scene for GameScene {
             ctx.screen_width,
             ctx.screen_height,
             "0.2.0-alpha.1",
+            &self.sdk_state,
         ) {
             Ok(session) => {
                 self.session = Some(session);
@@ -53,7 +59,6 @@ impl Scene for GameScene {
 
     fn on_enter(&mut self, ctx: &mut SceneContext) -> SceneResult {
         if let Some(ref session) = self.session {
-            // Restore state from suspension snapshot if available
             if let Some(ref snap_id) = self.snapshot_id {
                 if let Some(ref suspension) = ctx.suspension {
                     if let Ok(mut engine) = suspension.lock() {
@@ -73,8 +78,6 @@ impl Scene for GameScene {
     fn on_suspend(&mut self, ctx: &mut SceneContext) -> SceneResult {
         if let Some(ref session) = self.session {
             session.suspend();
-
-            // Save game state via suspension engine
             if let Some(ref suspension) = ctx.suspension {
                 if let Some(state_str) = session.get_state() {
                     if let Ok(mut engine) = suspension.lock() {

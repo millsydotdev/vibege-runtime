@@ -176,7 +176,7 @@ impl EventBus {
     {
         if let Ok(mut subs) = self.filtered.lock() {
             subs.push((category, priority, Box::new(f)));
-            subs.sort_by(|a, b| b.1.cmp(&a.1));
+            subs.sort_by_key(|k| std::cmp::Reverse(k.1));
         }
     }
 

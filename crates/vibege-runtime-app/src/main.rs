@@ -344,6 +344,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(unused_variables)]
 fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool) {
     #[cfg(target_os = "windows")]
     {

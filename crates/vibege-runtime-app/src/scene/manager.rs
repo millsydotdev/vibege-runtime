@@ -15,9 +15,21 @@ impl SceneManager {
             current.on_suspend(ctx)?;
         }
         scene.on_create(ctx)?;
-        scene.on_enter(ctx)?;
+        let action = scene.on_enter(ctx)?;
         self.stack.push(scene);
-        Ok(SceneAction::Continue)
+
+        // If on_enter requested a transition, process it now
+        match action {
+            SceneAction::Continue => Ok(SceneAction::Continue),
+            SceneAction::Replace(s) => {
+                self.stack.pop();
+                self.push(s, ctx)
+            }
+            SceneAction::Push(s) => self.push(s, ctx),
+            SceneAction::Pop => self.pop(ctx),
+            SceneAction::PopToRoot(s) => self.pop_to_root(s, ctx),
+            SceneAction::Exit => { self.stack.pop(); Ok(SceneAction::Exit) }
+        }
     }
 
     pub fn pop(&mut self, ctx: &mut SceneContext) -> SceneResult {

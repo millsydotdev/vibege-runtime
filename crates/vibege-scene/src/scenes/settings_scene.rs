@@ -98,6 +98,7 @@ impl SettingsScene {
                 startup_behavior: self.startup.clone(),
                 performance_mode: self.perf.clone(),
                 first_run_complete: true,
+                backend_url: "http://localhost:3000/api/v1".into(),
             },
         });
         self.dirty = false;

@@ -247,8 +247,9 @@ impl Scene for HomeScene {
             )));
         }
         if self.input_pressed(ctx, "o") {
+            let backend = ctx.config.get().general.backend_url;
             return Ok(SceneAction::Push(Box::new(
-                super::store_scene::StoreScene::new(),
+                super::store_scene::StoreScene::new(backend),
             )));
         }
 

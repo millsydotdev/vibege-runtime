@@ -30,6 +30,12 @@ pub struct GeneralConfig {
     pub performance_mode: String,
     #[serde(default)]
     pub first_run_complete: bool,
+    #[serde(default = "str_backend_url")]
+    pub backend_url: String,
+}
+
+fn str_backend_url() -> String {
+    "http://localhost:3000/api/v1".into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -82,6 +88,7 @@ impl Default for VibegeConfig {
                 startup_behavior: str_hidden(),
                 performance_mode: str_balanced(),
                 first_run_complete: false,
+                backend_url: str_backend_url(),
             },
         }
     }

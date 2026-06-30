@@ -178,7 +178,13 @@ impl Renderer {
             .iter()
             .find(|f| f.is_srgb())
             .copied()
-            .unwrap_or(surface_caps.formats[0]);
+            .unwrap_or(
+                surface_caps
+                    .formats
+                    .first()
+                    .copied()
+                    .unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb),
+            );
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -424,7 +430,7 @@ impl Renderer {
         });
 
         let tex_idx = {
-            let mut groups = self.texture_bind_groups.lock().unwrap();
+            let mut groups = self.texture_bind_groups.lock().expect("lock");
             let idx = groups.len();
             groups.push(bind_group);
             idx
@@ -436,7 +442,7 @@ impl Renderer {
     /// Queue a colored rectangle for the next frame.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
-        self.draw_list.lock().unwrap().push(DrawCmd::Rect {
+        self.draw_list.lock().expect("lock").push(DrawCmd::Rect {
             x,
             y,
             w,
@@ -450,7 +456,7 @@ impl Renderer {
 
     /// Queue a textured sprite for the next frame.
     pub fn draw_sprite(&self, tex_idx: usize, x: f32, y: f32, w: f32, h: f32) {
-        self.draw_list.lock().unwrap().push(DrawCmd::Sprite {
+        self.draw_list.lock().expect("lock").push(DrawCmd::Sprite {
             tex_idx,
             x,
             y,
@@ -471,7 +477,7 @@ impl Renderer {
         let glyph_uv_w = 8.0 / atlas_w; // each glyph is 8×8 pixels in the atlas
         let glyph_uv_h = 8.0 / atlas_h;
 
-        let mut list = self.draw_list.lock().unwrap();
+        let mut list = self.draw_list.lock().expect("lock");
         for (i, ch) in text.chars().enumerate() {
             let mut code = ch as u8;
             #[allow(clippy::manual_range_contains)]
@@ -504,7 +510,7 @@ impl Renderer {
 
     /// Set the background clear color.
     pub fn set_clear(&self, r: f32, g: f32, b: f32, a: f32) {
-        *self.clear_color.lock().unwrap() = (r, g, b, a);
+        *self.clear_color.lock().expect("lock") = (r, g, b, a);
     }
 
     /// Render all queued commands and present the frame.
@@ -516,7 +522,7 @@ impl Renderer {
             Texture(usize),
         }
 
-        let clear = *self.clear_color.lock().unwrap();
+        let clear = *self.clear_color.lock().expect("lock");
         let frame = self
             .surface
             .get_current_texture()
@@ -684,7 +690,7 @@ impl Renderer {
             match bg {
                 Some(BgKind::Font) => pass.set_bind_group(0, &renderer.font_bind_group, &[]),
                 Some(BgKind::Texture(idx)) => {
-                    let groups = renderer.texture_bind_groups.lock().unwrap();
+                    let groups = renderer.texture_bind_groups.lock().expect("lock");
                     if *idx < groups.len() {
                         pass.set_bind_group(0, &groups[*idx], &[]);
                     } else {
@@ -729,7 +735,12 @@ impl Renderer {
         }
 
         let (sw, sh) = self.screen_size;
-        let draw_cmds = self.draw_list.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let draw_cmds = self
+            .draw_list
+            .lock()
+            .expect("lock")
+            .drain(..)
+            .collect::<Vec<_>>();
         let mut vertices: Vec<SpriteVertex> = Vec::new();
         let mut indices: Vec<u16> = Vec::new();
         let mut current_bg: Option<BgKind> = None;

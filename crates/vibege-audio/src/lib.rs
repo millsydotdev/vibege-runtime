@@ -46,12 +46,12 @@ impl AudioSystem {
 
     /// Set the music volume (0.0 – 1.0).
     pub fn set_music_volume(&self, vol: f32) {
-        *self.music_volume.lock().unwrap() = vol.clamp(0.0, 1.0);
+        *self.music_volume.lock().expect("lock") = vol.clamp(0.0, 1.0);
     }
 
     /// Set the sound effect volume (0.0 – 1.0).
     pub fn set_sfx_volume(&self, vol: f32) {
-        *self.sfx_volume.lock().unwrap() = vol.clamp(0.0, 1.0);
+        *self.sfx_volume.lock().expect("lock") = vol.clamp(0.0, 1.0);
     }
 }
 

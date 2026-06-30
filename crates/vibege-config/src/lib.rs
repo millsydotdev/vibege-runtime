@@ -143,20 +143,20 @@ impl ConfigHandle {
     }
 
     pub fn get(&self) -> VibegeConfig {
-        self.inner.lock().unwrap().clone()
+        self.inner.lock().expect("lock").clone()
     }
 
     pub fn set(&self, config: VibegeConfig) {
-        *self.inner.lock().unwrap() = config.clone();
+        *self.inner.lock().expect("lock") = config.clone();
         save_config(&config);
     }
 
     pub fn is_first_run(&self) -> bool {
-        !self.inner.lock().unwrap().general.first_run_complete
+        !self.inner.lock().expect("lock").general.first_run_complete
     }
 
     pub fn complete_first_run(&self) {
-        let mut c = self.inner.lock().unwrap();
+        let mut c = self.inner.lock().expect("lock");
         c.general.first_run_complete = true;
         save_config(&c);
     }

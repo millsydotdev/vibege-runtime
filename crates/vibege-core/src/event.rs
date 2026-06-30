@@ -92,12 +92,12 @@ impl EventBus {
     where
         F: Fn(&RuntimeEvent) + Send + Sync + 'static,
     {
-        self.subscribers.lock().unwrap().push(Box::new(f));
+        self.subscribers.lock().expect("lock").push(Box::new(f));
     }
 
     /// Publish an event to all subscribers.
     pub fn publish(&self, event: &RuntimeEvent) {
-        let subscribers = self.subscribers.lock().unwrap();
+        let subscribers = self.subscribers.lock().expect("lock");
         for sub in subscribers.iter() {
             sub(event);
         }

@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
         .run(move |event, elwt| {
             match event {
                 Event::WindowEvent { event: we, .. } => {
-                    input.lock().unwrap().handle_window_event(&we);
+                    input.lock().expect("Input lock").handle_window_event(&we);
                     if matches!(we, winit::event::WindowEvent::CloseRequested) {
                         event_bus.publish(&vibege_core::RuntimeEvent::ShuttingDown);
                         info!("Window closed");
@@ -263,7 +263,7 @@ fn main() -> anyhow::Result<()> {
                         error!("GPU: {e}");
                     }
 
-                    input.lock().unwrap().end_frame();
+                    input.lock().expect("Input lock").end_frame();
                     window.request_redraw();
 
                     if scene_manager.is_empty() {

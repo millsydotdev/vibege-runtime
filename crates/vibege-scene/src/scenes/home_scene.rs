@@ -130,7 +130,9 @@ impl HomeScene {
     }
 
     fn launch_selected(&self, ctx: &mut SceneContext) -> SceneResult {
-        let game = &self.entries[self.selection];
+        let Some(game) = self.entries.get(self.selection) else {
+            return Ok(SceneAction::Continue);
+        };
         info!(game = %game.name, path = %game.path, "Launching game");
 
         if game.path == "demo" {

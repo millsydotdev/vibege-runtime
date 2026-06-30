@@ -38,7 +38,7 @@ function update(dt)
     then
         ball_dy = -ball_dy
         score = score + 1
-        vibege.audio.play_bounce()
+        if vibege.audio then vibege.audio.play_bounce() end
     end
 
     -- Fall off bottom = game over

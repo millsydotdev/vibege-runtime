@@ -256,6 +256,21 @@ enum DrawCmd {
         w: f32,
         h: f32,
     },
+    SpriteSubtex {
+        tex_idx: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        u1: f32,
+        v1: f32,
+        u2: f32,
+        v2: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    },
     Glyph {
         x: f32,
         y: f32,
@@ -284,7 +299,9 @@ impl DrawCmd {
     fn bind_group(&self) -> BindGroupId {
         match self {
             DrawCmd::Rect { .. } => BindGroupId::Default,
-            DrawCmd::Sprite { tex_idx, .. } => BindGroupId::Texture(*tex_idx),
+            DrawCmd::Sprite { tex_idx, .. } | DrawCmd::SpriteSubtex { tex_idx, .. } => {
+                BindGroupId::Texture(*tex_idx)
+            }
             DrawCmd::Glyph { .. } => BindGroupId::Font,
         }
     }
@@ -293,6 +310,7 @@ impl DrawCmd {
     fn uv(&self) -> [f32; 4] {
         match self {
             DrawCmd::Rect { .. } | DrawCmd::Sprite { .. } => [0.0, 0.0, 1.0, 1.0],
+            DrawCmd::SpriteSubtex { u1, v1, u2, v2, .. } => [*u1, *v1, *u2, *v2],
             DrawCmd::Glyph { u1, v1, u2, v2, .. } => [*u1, *v1, *u2, *v2],
         }
     }
@@ -302,6 +320,7 @@ impl DrawCmd {
         match self {
             DrawCmd::Rect { r, g, b, a, .. } => [*r, *g, *b, *a],
             DrawCmd::Sprite { .. } => [1.0, 1.0, 1.0, 1.0],
+            DrawCmd::SpriteSubtex { r, g, b, a, .. } => [*r, *g, *b, *a],
             DrawCmd::Glyph { r, g, b, .. } => [*r, *g, *b, 1.0],
         }
     }
@@ -311,6 +330,7 @@ impl DrawCmd {
         match self {
             DrawCmd::Rect { x, y, w, h, .. }
             | DrawCmd::Sprite { x, y, w, h, .. }
+            | DrawCmd::SpriteSubtex { x, y, w, h, .. }
             | DrawCmd::Glyph { x, y, w, h, .. } => (*x, *y, *w, *h),
         }
     }
@@ -854,6 +874,59 @@ impl Renderer {
             w,
             h,
         });
+    }
+
+    /// Queue a sub-texture sprite with UV coordinates and tint colour.
+    pub fn draw_sprite_subtex(
+        &self,
+        tex_idx: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        u1: f32,
+        v1: f32,
+        u2: f32,
+        v2: f32,
+        tint_r: f32,
+        tint_g: f32,
+        tint_b: f32,
+        tint_a: f32,
+    ) {
+        self.draw_list
+            .lock()
+            .expect("lock")
+            .push(DrawCmd::SpriteSubtex {
+                tex_idx,
+                x,
+                y,
+                w,
+                h,
+                u1,
+                v1,
+                u2,
+                v2,
+                r: tint_r,
+                g: tint_g,
+                b: tint_b,
+                a: tint_a,
+            });
+    }
+
+    /// Queue a tinted sprite (full texture, custom colour).
+    pub fn draw_sprite_tinted(
+        &self,
+        tex_idx: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) {
+        self.draw_sprite_subtex(tex_idx, x, y, w, h, 0.0, 0.0, 1.0, 1.0, r, g, b, a);
     }
 
     /// Draw text using the embedded 8×8 monospace bitmap font.

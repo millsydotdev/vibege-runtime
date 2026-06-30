@@ -35,6 +35,7 @@ struct RuntimeCli {
     overlay: bool,
 }
 
+#[allow(deprecated)] // winit 0.30 EventLoop::create_window / run — still works, not worth the ApplicationHandler refactor yet
 fn main() -> anyhow::Result<()> {
     install_panic_hook();
     let cli = RuntimeCli::parse();

@@ -367,7 +367,7 @@ impl Renderer {
     /// Render all queued commands and present the frame.
     pub fn render(&self) -> Result<(), RenderError> {
                 #[derive(PartialEq)]
-                enum BgKind { Default, Font, Texture(usize) }
+                enum BgKind { Font, Texture(usize) }
 
         let clear = *self.clear_color.lock().unwrap();
         let frame = self.surface.get_current_texture()
@@ -405,7 +405,7 @@ impl Renderer {
             idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
-        fn add_sprite(tex_idx: usize, x: f32, y: f32, w: f32, h: f32, sw: f32, sh: f32, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>) {
+        fn add_sprite(_tex_idx: usize, x: f32, y: f32, w: f32, h: f32, sw: f32, sh: f32, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>) {
             let x1 = (x / sw) * 2.0 - 1.0;
             let y1 = 1.0 - (y / sh) * 2.0;
             let x2 = ((x + w) / sw) * 2.0 - 1.0;

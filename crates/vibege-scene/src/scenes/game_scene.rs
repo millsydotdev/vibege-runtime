@@ -29,9 +29,10 @@ impl GameScene {
 impl Scene for GameScene {
     fn id(&self) -> SceneId { SceneId::Game }
 
-    fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
+    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
         info!("GameScene: creating game session");
-        match GameSession::load(&self.game_source, &self.renderer, &self.input, &self.audio) {
+        let event_bus = ctx.event_bus.clone();
+        match GameSession::load("game", &self.game_source, &self.renderer, &self.input, &self.audio, event_bus) {
             Ok(session) => {
                 self.session = Some(session);
                 Ok(SceneAction::Continue)

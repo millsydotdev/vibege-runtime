@@ -291,6 +291,14 @@ fn main() -> anyhow::Result<()> {
 
     platform_lua.globals().set("vibege", vibege).expect("set vibege globals");
 
+    // ── Runtime Event Bus ──
+    let event_bus = Arc::new(vibege_core::EventBus::new());
+    // Log all events at debug level
+    let eb_log = Arc::clone(&event_bus);
+    eb_log.subscribe(move |ev| {
+        info!("Event: {ev:?}");
+    });
+
     // ── Scene Manager ──
     let mut scene_ctx = SceneContext::new(
         w, h,
@@ -298,6 +306,7 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&input),
         Arc::clone(&cfg),
         Rc::clone(&platform_lua),
+        Some(Arc::clone(&event_bus)),
     );
     let mut scene_manager = SceneManager::new();
     scene_manager.push(Box::new(BootScene::new()), &mut scene_ctx)
@@ -357,12 +366,21 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 // Tray signals
-                if vibege_tray::should_show_launcher() { window.set_visible(true); }
+                if vibege_tray::should_show_launcher() {
+                    window.set_visible(true);
+                    event_bus.publish(&vibege_core::RuntimeEvent::OverlayShown);
+                }
                 if vibege_tray::should_toggle_overlay() {
                     let visible = window.is_visible().unwrap_or(true);
                     window.set_visible(!visible);
+                    if visible {
+                        event_bus.publish(&vibege_core::RuntimeEvent::OverlayHidden);
+                    } else {
+                        event_bus.publish(&vibege_core::RuntimeEvent::OverlayShown);
+                    }
                 }
                 if vibege_tray::should_quit() {
+                    event_bus.publish(&vibege_core::RuntimeEvent::ShuttingDown);
                     info!("Quit requested from tray");
                     scene_manager.shutdown(&mut scene_ctx);
                     elwt.exit(); return;

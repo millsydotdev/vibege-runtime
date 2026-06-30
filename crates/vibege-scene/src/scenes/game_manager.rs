@@ -3,23 +3,35 @@ use std::sync::Mutex;
 use mlua::{Function, Lua};
 use tracing::{info, warn};
 use vibege_audio::AudioSystem;
+use vibege_core::{EventBus, RuntimeEvent};
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
 
 /// A live game session with its own isolated Lua VM.
-/// Not Send — runs on the main thread only.
 pub struct GameSession {
     lua: Lua,
     has_update: bool,
     has_render: bool,
+    game_name: String,
+    event_bus: Option<Arc<EventBus>>,
+}
+
+impl Drop for GameSession {
+    fn drop(&mut self) {
+        if let Some(ref bus) = self.event_bus {
+            bus.publish(&RuntimeEvent::GameExited { name: self.game_name.clone() });
+        }
+    }
 }
 
 impl GameSession {
     pub fn load(
+        game_name: &str,
         source: &str,
         renderer: &Arc<Renderer>,
         input: &Arc<Mutex<InputManager>>,
         audio: &Option<Arc<AudioSystem>>,
+        event_bus: Option<Arc<EventBus>>,
     ) -> Result<Self, String> {
         let lua = Lua::new();
         let vibege = lua.create_table().map_err(|e| e.to_string())?;
@@ -102,8 +114,12 @@ impl GameSession {
             }
         }
 
+        if let Some(ref bus) = event_bus {
+            bus.publish(&RuntimeEvent::GameStarted { name: game_name.to_string() });
+        }
         info!("Game session created");
-        Ok(Self { lua, has_update, has_render })
+        let eb = event_bus.as_ref().map(|a| Arc::clone(a));
+        Ok(Self { lua, has_update, has_render, game_name: game_name.to_string(), event_bus: eb })
     }
 
     pub fn update(&self, dt: f64) -> Result<(), String> {
@@ -128,11 +144,17 @@ impl GameSession {
         if let Ok(suspend_fn) = self.lua.globals().get::<Function>("suspend") {
             let _ = suspend_fn.call::<()>(());
         }
+        if let Some(ref bus) = self.event_bus {
+            bus.publish(&RuntimeEvent::GameSuspended { name: self.game_name.clone() });
+        }
     }
 
     pub fn resume(&self) {
         if let Ok(resume_fn) = self.lua.globals().get::<Function>("resume") {
             let _ = resume_fn.call::<()>(());
+        }
+        if let Some(ref bus) = self.event_bus {
+            bus.publish(&RuntimeEvent::GameResumed { name: self.game_name.clone() });
         }
     }
 

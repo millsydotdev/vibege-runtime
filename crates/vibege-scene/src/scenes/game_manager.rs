@@ -58,6 +58,7 @@ impl GameSession {
             screen_height,
             engine_version,
             sdk_state,
+            game_name,
         )?;
         lua.globals()
             .set("vibege", vibege)

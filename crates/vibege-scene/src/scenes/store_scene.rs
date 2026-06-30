@@ -51,6 +51,8 @@ pub struct StoreScene {
     search: String,
     search_mode: bool,
     search_cursor: usize,
+    page: u32,
+    total: u32,
 }
 
 impl StoreScene {
@@ -64,7 +66,45 @@ impl StoreScene {
             search: String::new(),
             search_mode: false,
             search_cursor: 0,
+            page: 0,
+            total: 0,
         }
+    }
+
+    fn fetch(&mut self, page: u32) {
+        let offset = page * 20;
+        let url = if self.search.is_empty() {
+            format!("{}/registry?limit=20&offset={}", self.backend, offset)
+        } else {
+            format!(
+                "{}/registry?limit=20&offset={}&search={}",
+                self.backend,
+                offset,
+                urlencoding(&self.search)
+            )
+        };
+        self.loading = true;
+        let mut body = String::new();
+        match ureq::get(&url).call() {
+            Ok(resp) => {
+                if resp
+                    .into_body()
+                    .into_reader()
+                    .read_to_string(&mut body)
+                    .is_ok()
+                {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        self.games = json["packages"].as_array().cloned().unwrap_or_default();
+                        self.total = json["total"].as_u64().unwrap_or(0) as u32;
+                        self.page = page;
+                        self.selection = 0;
+                    }
+                }
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("HTTP: {e}")),
+        }
+        self.loading = false;
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
@@ -105,19 +145,8 @@ impl Scene for StoreScene {
     }
 
     fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
-        let bk = self.backend.clone();
-        info!("StoreScene: fetching from {bk}");
-        match fetch_registry(&bk, "") {
-            Ok(games) => {
-                self.games = games;
-                self.loading = false;
-                info!(count = self.games.len(), "Store loaded");
-            }
-            Err(e) => {
-                self.error = Some(e);
-                self.loading = false;
-            }
-        }
+        info!("StoreScene: fetching from {}", self.backend);
+        self.fetch(0);
         Ok(SceneAction::Continue)
     }
 
@@ -156,6 +185,16 @@ impl Scene for StoreScene {
             .lock()
             .expect("lock")
             .is_key_pressed(vibege_input::key_name_to_code("r"));
+        let left = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("left"));
+        let right = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("right"));
 
         if esc && !self.search_mode {
             return Ok(SceneAction::Pop);
@@ -225,19 +264,16 @@ impl Scene for StoreScene {
 
         // Normal navigation
         if r {
-            self.loading = true;
-            let bk = self.backend.clone();
-            match fetch_registry(&bk, "") {
-                Ok(games) => {
-                    self.games = games;
-                    self.loading = false;
-                    self.selection = 0;
-                }
-                Err(e) => {
-                    self.error = Some(e);
-                    self.loading = false;
-                }
-            }
+            self.fetch(0);
+            return Ok(SceneAction::Continue);
+        }
+        let max_page = (self.total / 20).max(1).saturating_sub(1);
+        if !self.search_mode && left && self.page > 0 {
+            self.fetch(self.page - 1);
+            return Ok(SceneAction::Continue);
+        }
+        if !self.search_mode && right && self.page < max_page {
+            self.fetch(self.page + 1);
             return Ok(SceneAction::Continue);
         }
 
@@ -291,6 +327,17 @@ impl Scene for StoreScene {
             );
         } else {
             self.text(ctx, 42.0, 12.0, "Game Store", 14.0, 1.0, 1.0, 1.0);
+            let max_page = (self.total / 20).max(1);
+            self.text(
+                ctx,
+                640.0,
+                14.0,
+                &format!("Page {}/{}", self.page + 1, max_page),
+                8.0,
+                0.5,
+                0.5,
+                0.6,
+            );
         }
 
         if self.loading {
@@ -311,7 +358,7 @@ impl Scene for StoreScene {
             ctx,
             42.0,
             51.0,
-            "Arrows: Browse     Enter: Install     S: Search     R: Refresh     Esc: Back",
+             "Arrows: Browse     Enter: Install     S: Search     R: Refresh     L/R: Page     Esc: Back",
             7.0,
             0.5,
             0.5,

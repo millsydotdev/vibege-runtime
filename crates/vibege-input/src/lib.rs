@@ -1,96 +1,122 @@
-//! # VibeGE Input
+//! # VibeGE Input System
 //!
-//! Cross-platform input abstraction for keyboard, mouse, and gamepad.
+//! Cross-platform input abstraction for keyboard, mouse, and gamepad,
+//! with an action mapping system and input contexts.
 //!
-//! The `InputManager` accumulates input events each frame and exposes
-//! both event-based APIs (is_key_pressed, is_key_released) and
-//! state-based APIs (is_key_down, mouse_position, mouse_delta).
+//! # Architecture
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────┐
+//! │                    InputManager                      │
+//! │  • Processes winit events each frame                 │
+//! │  • Tracks keyboard, mouse, gamepad device state      │
+//! │  • Exposes raw key/button/axis queries               │
+//! └──────┬──────────┬──────────────┬─────────────────────┘
+//!        │          │              │
+//!        ▼          ▼              ▼
+//! ┌──────────┐ ┌──────────┐ ┌──────────────┐
+//! │ ActionMap│ │ CtxStack │ │ GamepadState │
+//! │ • actions│ │ • stack  │ │ • 4 slots    │
+//! │ • axes   │ │ • top-   │ │ • dead zones │
+//! │ • chords │ │   down   │ │ • axis conf  │
+//! │ • confs  │ │   resolve│ │              │
+//! └──────────┘ └──────────┘ └──────────────┘
+//! ```
+//!
+//! # Frame Lifecycle
+//!
+//! 1. **Poll** — winit events arrive via `handle_window_event()` /
+//!    `handle_device_event()`
+//! 2. **Process** — InputManager updates raw device state
+//! 3. **Query** — Game code queries actions, axes, mouse, gamepad
+//! 4. **End** — `end_frame()` transitions Pressed→Held, Released→Idle,
+//!    clears per-frame deltas
+//!
+//! # Thread Safety
+//!
+//! `InputManager` is **not** `Send + Sync`. It must be accessed from the
+//! main thread (typically behind `Arc<Mutex<InputManager>>`).
+//!
+//! `ActionMap` and `ContextStack` are `Clone + Send`.
+
+pub mod action;
+pub mod context;
+pub mod gamepad;
+pub mod mouse;
+
+use std::collections::HashMap;
 
 use winit::event::MouseScrollDelta;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-/// Represents a mouse button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MouseButton {
-    Left,
-    Right,
-    Middle,
-    Back,
-    Forward,
-    Other(u16),
-}
+pub use gamepad::{GamepadAxis, GamepadButton};
+pub use mouse::MouseButton;
 
-impl From<winit::event::MouseButton> for MouseButton {
-    fn from(b: winit::event::MouseButton) -> Self {
-        match b {
-            winit::event::MouseButton::Left => Self::Left,
-            winit::event::MouseButton::Right => Self::Right,
-            winit::event::MouseButton::Middle => Self::Middle,
-            winit::event::MouseButton::Back => Self::Back,
-            winit::event::MouseButton::Forward => Self::Forward,
-            winit::event::MouseButton::Other(v) => Self::Other(v),
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// ButtonState
+// ---------------------------------------------------------------------------
 
-/// Represents a gamepad button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GamepadButton {
-    South,
-    North,
-    East,
-    West,
-    LeftTrigger,
-    RightTrigger,
-    LeftShoulder,
-    RightShoulder,
-    Select,
-    Start,
-    LeftStick,
-    RightStick,
-    DPadUp,
-    DPadDown,
-    DPadLeft,
-    DPadRight,
-}
-
-/// Represents a gamepad axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GamepadAxis {
-    LeftStickX,
-    LeftStickY,
-    RightStickX,
-    RightStickY,
-    LeftTrigger,
-    RightTrigger,
-}
-
-/// Current state of a single key or button.
+/// Current state of a single key or button input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonState {
+    /// Pressed this frame (edge trigger).
     Pressed,
+    /// Held down from a previous frame.
     Held,
+    /// Released this frame.
     Released,
+    /// Not active.
     Idle,
 }
 
+// ---------------------------------------------------------------------------
+// InputManager
+// ---------------------------------------------------------------------------
+
 /// Accumulated input state for the current frame.
 ///
-/// Tracks the state of all input devices. `InputManager` processes
-/// winit events and exposes a clean API for game code.
+/// Processes winit events and exposes a clean API for game code, action
+/// mapping, and input contexts.
 pub struct InputManager {
-    keyboard: KeyboardState,
-    mouse: MouseState,
-    gamepad: GamepadState,
+    keyboard: HashMap<KeyCode, ButtonState>,
+    mouse: mouse::MouseState,
+    gamepad: gamepad::GamepadSystem,
+    /// Whether the window is focused.
+    focused: bool,
 }
 
 impl InputManager {
     /// Creates a new input manager with all devices in idle state.
     pub fn new() -> Self {
         Self {
-            keyboard: KeyboardState::new(),
-            mouse: MouseState::new(),
-            gamepad: GamepadState::new(),
+            keyboard: HashMap::new(),
+            mouse: mouse::MouseState::new(),
+            gamepad: gamepad::GamepadSystem::new(),
+            focused: true,
+        }
+    }
+
+    // ─── Focus ──────────────────────────────────────────────────────
+
+    /// Whether the window currently has focus.
+    pub fn is_focused(&self) -> bool {
+        self.focused
+    }
+
+    /// Set the window focus state.
+    /// When focus is lost, all keys and gamepad states are released
+    /// (the OS may not deliver key-up events after focus loss).
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+        if !focused {
+            for state in self.keyboard.values_mut() {
+                *state = ButtonState::Idle;
+            }
+            for pad in &mut self.gamepad.pads {
+                for state in pad.button_states.values_mut() {
+                    *state = ButtonState::Idle;
+                }
+            }
         }
     }
 
@@ -98,24 +124,25 @@ impl InputManager {
 
     /// Returns `true` if the key is currently held down.
     pub fn is_key_down(&self, key: KeyCode) -> bool {
-        self.keyboard.key_states.get(&key).copied() == Some(ButtonState::Pressed)
-            || self.keyboard.key_states.get(&key).copied() == Some(ButtonState::Held)
+        matches!(
+            self.keyboard.get(&key),
+            Some(ButtonState::Pressed) | Some(ButtonState::Held)
+        )
     }
 
     /// Returns `true` if the key was pressed this frame (edge trigger).
     pub fn is_key_pressed(&self, key: KeyCode) -> bool {
-        self.keyboard.key_states.get(&key).copied() == Some(ButtonState::Pressed)
+        self.keyboard.get(&key) == Some(&ButtonState::Pressed)
     }
 
     /// Returns `true` if the key was released this frame.
     pub fn is_key_released(&self, key: KeyCode) -> bool {
-        self.keyboard.key_states.get(&key).copied() == Some(ButtonState::Released)
+        self.keyboard.get(&key) == Some(&ButtonState::Released)
     }
 
     /// Returns the state of a specific key.
     pub fn key_state(&self, key: KeyCode) -> ButtonState {
         self.keyboard
-            .key_states
             .get(&key)
             .copied()
             .unwrap_or(ButtonState::Idle)
@@ -123,13 +150,18 @@ impl InputManager {
 
     /// Returns an iterator over all currently pressed keys.
     pub fn pressed_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
-        self.keyboard.key_states.iter().filter_map(|(&k, &s)| {
+        self.keyboard.iter().filter_map(|(&k, &s)| {
             if s == ButtonState::Pressed || s == ButtonState::Held {
                 Some(k)
             } else {
                 None
             }
         })
+    }
+
+    /// Directly set a key state (for testing or programmatic control).
+    pub fn set_key_state(&mut self, key: KeyCode, state: ButtonState) {
+        self.keyboard.insert(key, state);
     }
 
     // ─── Mouse API ───────────────────────────────────────────────────
@@ -146,13 +178,15 @@ impl InputManager {
 
     /// Returns `true` if the specified mouse button is held down.
     pub fn is_mouse_button_down(&self, button: MouseButton) -> bool {
-        self.mouse.button_states.get(&button).copied() == Some(ButtonState::Pressed)
-            || self.mouse.button_states.get(&button).copied() == Some(ButtonState::Held)
+        matches!(
+            self.mouse.button_states.get(&button),
+            Some(ButtonState::Pressed) | Some(ButtonState::Held)
+        )
     }
 
     /// Returns `true` if the specified mouse button was pressed this frame.
     pub fn is_mouse_button_pressed(&self, button: MouseButton) -> bool {
-        self.mouse.button_states.get(&button).copied() == Some(ButtonState::Pressed)
+        self.mouse.button_states.get(&button) == Some(&ButtonState::Pressed)
     }
 
     /// Returns the scroll wheel delta since last frame.
@@ -160,67 +194,180 @@ impl InputManager {
         self.mouse.scroll_delta
     }
 
+    /// Mouse button state (for action system).
+    pub fn mouse_button_state(&self, button: MouseButton) -> ButtonState {
+        self.mouse
+            .button_states
+            .get(&button)
+            .copied()
+            .unwrap_or(ButtonState::Idle)
+    }
+
+    /// Was the mouse button double-clicked?
+    pub fn is_double_click(&self, button: MouseButton) -> bool {
+        self.mouse.double_click.contains_key(&button)
+    }
+
+    /// Is the mouse button currently being dragged?
+    pub fn is_dragging(&self, button: MouseButton) -> bool {
+        self.mouse
+            .is_dragging
+            .get(&button)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Set cursor visibility.
+    pub fn set_cursor_visible(&mut self, visible: bool) {
+        self.mouse.cursor_visible = visible;
+    }
+
+    /// Is the cursor visible?
+    pub fn cursor_visible(&self) -> bool {
+        self.mouse.cursor_visible
+    }
+
+    /// Set cursor lock (grab).
+    pub fn set_cursor_locked(&mut self, locked: bool) {
+        self.mouse.cursor_locked = locked;
+    }
+
+    /// Is the cursor locked?
+    pub fn cursor_locked(&self) -> bool {
+        self.mouse.cursor_locked
+    }
+
     // ─── Gamepad API ─────────────────────────────────────────────────
 
-    /// Returns `true` if a gamepad is connected.
+    /// Returns `true` if at least one gamepad is connected.
     pub fn is_gamepad_connected(&self) -> bool {
-        self.gamepad.connected
+        self.gamepad.any_connected()
     }
 
-    /// Returns `true` if the specified gamepad button is held down.
+    /// Number of connected gamepads.
+    pub fn gamepad_count(&self) -> usize {
+        self.gamepad.connected_count()
+    }
+
+    /// Returns `true` if a specific gamepad slot is connected.
+    pub fn is_gamepad_slot_connected(&self, slot: usize) -> bool {
+        self.gamepad.get(slot).map(|p| p.connected).unwrap_or(false)
+    }
+
+    /// Returns `true` if the specified gamepad button is held down (slot 0).
     pub fn is_gamepad_button_down(&self, button: GamepadButton) -> bool {
-        self.gamepad.button_states.get(&button).copied() == Some(ButtonState::Pressed)
-            || self.gamepad.button_states.get(&button).copied() == Some(ButtonState::Held)
+        self.is_gamepad_button_down_slot(0, button)
     }
 
-    /// Returns `true` if the specified gamepad button was pressed this frame.
+    /// Returns `true` if the specified gamepad button was pressed this frame (slot 0).
     pub fn is_gamepad_button_pressed(&self, button: GamepadButton) -> bool {
-        self.gamepad.button_states.get(&button).copied() == Some(ButtonState::Pressed)
+        self.is_gamepad_button_pressed_slot(0, button)
     }
 
-    /// Returns the value of a gamepad axis (range -1.0 to 1.0).
+    /// Returns `true` if the specified gamepad button is held down on a specific slot.
+    pub fn is_gamepad_button_down_slot(&self, slot: usize, button: GamepadButton) -> bool {
+        self.gamepad.get(slot).is_some_and(|p| {
+            matches!(
+                p.button_states.get(&button),
+                Some(ButtonState::Pressed) | Some(ButtonState::Held)
+            )
+        })
+    }
+
+    /// Returns `true` if the specified gamepad button was pressed this frame on a specific slot.
+    pub fn is_gamepad_button_pressed_slot(&self, slot: usize, button: GamepadButton) -> bool {
+        self.gamepad
+            .get(slot)
+            .is_some_and(|p| p.button_states.get(&button) == Some(&ButtonState::Pressed))
+    }
+
+    /// Gamepad button state (for action system).
+    pub fn gamepad_button_state(&self, button: GamepadButton) -> ButtonState {
+        self.gamepad_button_state_slot(0, button)
+    }
+
+    /// Gamepad button state for a specific slot.
+    pub fn gamepad_button_state_slot(&self, slot: usize, button: GamepadButton) -> ButtonState {
+        self.gamepad
+            .get(slot)
+            .and_then(|p| p.button_states.get(&button))
+            .copied()
+            .unwrap_or(ButtonState::Idle)
+    }
+
+    /// Returns the value of a gamepad axis (slot 0, range -1.0 to 1.0).
     pub fn gamepad_axis(&self, axis: GamepadAxis) -> f64 {
-        self.gamepad.axes.get(&axis).copied().unwrap_or(0.0)
+        self.gamepad_axis_slot(0, axis)
+    }
+
+    /// Returns the value of a gamepad axis for a specific slot.
+    pub fn gamepad_axis_slot(&self, slot: usize, axis: GamepadAxis) -> f64 {
+        self.gamepad
+            .get(slot)
+            .and_then(|p| p.axes.get(&axis))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Set a raw axis value for a gamepad slot.
+    pub fn set_gamepad_axis(&mut self, axis: GamepadAxis, value: f64) {
+        if let Some(pad) = self.gamepad.get_mut(0) {
+            pad.axes.insert(axis, value);
+        }
+    }
+
+    /// Mark a gamepad slot as connected/disconnected.
+    pub fn set_gamepad_connected(&mut self, slot: usize, connected: bool) {
+        self.gamepad.set_connected(slot, connected);
+    }
+
+    /// Set the name of a connected gamepad.
+    pub fn set_gamepad_name(&mut self, slot: usize, name: &str) {
+        if let Some(pad) = self.gamepad.get_mut(slot) {
+            pad.name = Some(name.to_string());
+        }
+    }
+
+    /// Get the name of a connected gamepad.
+    pub fn gamepad_name(&self, slot: usize) -> Option<&str> {
+        self.gamepad.get(slot).and_then(|p| p.name.as_deref())
     }
 
     // ─── Event Processing ────────────────────────────────────────────
 
     /// Processes a winit window event and updates input state.
-    ///
-    /// Call this from your event loop for each `WindowEvent` received.
     pub fn handle_window_event(&mut self, event: &winit::event::WindowEvent) {
         match event {
+            winit::event::WindowEvent::Focused(focused) => {
+                self.focused = *focused;
+                if !focused {
+                    self.release_all();
+                }
+            }
             winit::event::WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     match event.state {
                         winit::event::ElementState::Pressed => {
-                            self.keyboard
-                                .key_states
-                                .insert(keycode, ButtonState::Pressed);
+                            self.keyboard.insert(keycode, ButtonState::Pressed);
                         }
                         winit::event::ElementState::Released => {
-                            self.keyboard
-                                .key_states
-                                .insert(keycode, ButtonState::Released);
+                            self.keyboard.insert(keycode, ButtonState::Released);
                         }
                     }
                 }
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
-                let new_pos = (position.x, position.y);
-                self.mouse.delta = (
-                    new_pos.0 - self.mouse.position.0,
-                    new_pos.1 - self.mouse.position.1,
-                );
-                self.mouse.position = new_pos;
+                self.mouse.on_move((position.x, position.y));
             }
             winit::event::WindowEvent::MouseInput { button, state, .. } => {
                 let btn = MouseButton::from(*button);
                 match state {
                     winit::event::ElementState::Pressed => {
+                        self.mouse.on_button_down(btn);
                         self.mouse.button_states.insert(btn, ButtonState::Pressed);
                     }
                     winit::event::ElementState::Released => {
+                        self.mouse.on_button_up(btn);
                         self.mouse.button_states.insert(btn, ButtonState::Released);
                     }
                 }
@@ -245,42 +392,56 @@ impl InputManager {
             winit::event::DeviceEvent::Button { button, state } => {
                 let b = *button as u16;
                 if b <= 16 {
-                    let gp_btn = raw_button_to_gamepad(b);
-                    match state {
-                        winit::event::ElementState::Pressed => {
-                            self.gamepad
-                                .button_states
-                                .insert(gp_btn, ButtonState::Pressed);
-                        }
-                        winit::event::ElementState::Released => {
-                            self.gamepad
-                                .button_states
-                                .insert(gp_btn, ButtonState::Released);
-                        }
+                    let gp_btn = gamepad::raw_button_to_gamepad(b);
+                    let pad_state = match state {
+                        winit::event::ElementState::Pressed => ButtonState::Pressed,
+                        winit::event::ElementState::Released => ButtonState::Released,
+                    };
+                    if let Some(pad) = self.gamepad.get_mut(0) {
+                        pad.button_states.insert(gp_btn, pad_state);
+                        pad.connected = true;
                     }
-                    self.gamepad.connected = true;
                 }
             }
             winit::event::DeviceEvent::MouseMotion { delta } => {
-                // Relative mouse motion (for raw input / camera control)
                 self.mouse.delta = (self.mouse.delta.0 + delta.0, self.mouse.delta.1 + delta.1);
             }
             _ => {}
         }
     }
 
-    /// Updates gamepad connection state.
-    pub fn set_gamepad_connected(&mut self, connected: bool) {
-        self.gamepad.connected = connected;
+    /// Releases all pressed keys and buttons (used on focus loss).
+    fn release_all(&mut self) {
+        for state in self.keyboard.values_mut() {
+            match *state {
+                ButtonState::Pressed | ButtonState::Held => *state = ButtonState::Released,
+                _ => {}
+            }
+        }
+        for state in self.mouse.button_states.values_mut() {
+            match *state {
+                ButtonState::Pressed | ButtonState::Held => *state = ButtonState::Released,
+                _ => {}
+            }
+        }
+        for pad in &mut self.gamepad.pads {
+            for state in pad.button_states.values_mut() {
+                match *state {
+                    ButtonState::Pressed | ButtonState::Held => *state = ButtonState::Released,
+                    _ => {}
+                }
+            }
+            pad.axes.clear();
+        }
     }
 
     /// Advances to the next frame.
     ///
     /// Call this once per frame after processing all events.
-    /// This clears per-frame state (pressed/released, scroll delta, mouse delta).
+    /// Transitions Pressed→Held, Released→Idle, clears per-frame deltas.
     pub fn end_frame(&mut self) {
-        // Clear per-frame key states
-        for state in self.keyboard.key_states.values_mut() {
+        // Keyboard
+        for state in self.keyboard.values_mut() {
             match *state {
                 ButtonState::Pressed => *state = ButtonState::Held,
                 ButtonState::Released => *state = ButtonState::Idle,
@@ -288,7 +449,7 @@ impl InputManager {
             }
         }
 
-        // Clear per-frame mouse states
+        // Mouse
         self.mouse.delta = (0.0, 0.0);
         self.mouse.scroll_delta = (0.0, 0.0);
         for state in self.mouse.button_states.values_mut() {
@@ -299,12 +460,14 @@ impl InputManager {
             }
         }
 
-        // Clear per-frame gamepad states
-        for state in self.gamepad.button_states.values_mut() {
-            match *state {
-                ButtonState::Pressed => *state = ButtonState::Held,
-                ButtonState::Released => *state = ButtonState::Idle,
-                _ => {}
+        // Gamepad
+        for pad in &mut self.gamepad.pads {
+            for state in pad.button_states.values_mut() {
+                match *state {
+                    ButtonState::Pressed => *state = ButtonState::Held,
+                    ButtonState::Released => *state = ButtonState::Idle,
+                    _ => {}
+                }
             }
         }
     }
@@ -316,75 +479,9 @@ impl Default for InputManager {
     }
 }
 
-// ─── Internal State Types ──────────────────────────────────────────
-
-struct KeyboardState {
-    key_states: std::collections::HashMap<KeyCode, ButtonState>,
-}
-
-impl KeyboardState {
-    fn new() -> Self {
-        Self {
-            key_states: std::collections::HashMap::new(),
-        }
-    }
-}
-
-struct MouseState {
-    position: (f64, f64),
-    delta: (f64, f64),
-    button_states: std::collections::HashMap<MouseButton, ButtonState>,
-    scroll_delta: (f64, f64),
-}
-
-impl MouseState {
-    fn new() -> Self {
-        Self {
-            position: (0.0, 0.0),
-            delta: (0.0, 0.0),
-            button_states: std::collections::HashMap::new(),
-            scroll_delta: (0.0, 0.0),
-        }
-    }
-}
-
-struct GamepadState {
-    connected: bool,
-    button_states: std::collections::HashMap<GamepadButton, ButtonState>,
-    axes: std::collections::HashMap<GamepadAxis, f64>,
-}
-
-impl GamepadState {
-    fn new() -> Self {
-        Self {
-            connected: false,
-            button_states: std::collections::HashMap::new(),
-            axes: std::collections::HashMap::new(),
-        }
-    }
-}
-
-fn raw_button_to_gamepad(button: u16) -> GamepadButton {
-    match button {
-        0 => GamepadButton::South,
-        1 => GamepadButton::East,
-        2 => GamepadButton::West,
-        3 => GamepadButton::North,
-        4 => GamepadButton::LeftShoulder,
-        5 => GamepadButton::RightShoulder,
-        6 => GamepadButton::LeftTrigger,
-        7 => GamepadButton::RightTrigger,
-        8 => GamepadButton::Select,
-        9 => GamepadButton::Start,
-        10 => GamepadButton::LeftStick,
-        11 => GamepadButton::RightStick,
-        12 => GamepadButton::DPadUp,
-        13 => GamepadButton::DPadDown,
-        14 => GamepadButton::DPadLeft,
-        15 => GamepadButton::DPadRight,
-        _ => GamepadButton::South,
-    }
-}
+// ---------------------------------------------------------------------------
+// Key name conversion
+// ---------------------------------------------------------------------------
 
 /// Convert a string key name to a winit KeyCode.
 /// Used by Lua bindings to map string keys like "left", "space" to platform keycodes.
@@ -460,6 +557,10 @@ pub fn key_name_to_code(name: &str) -> KeyCode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +571,7 @@ mod tests {
         let im = InputManager::new();
         assert_eq!(im.mouse_position(), (0.0, 0.0));
         assert!(!im.is_gamepad_connected());
+        assert!(im.is_focused());
     }
 
     #[test]
@@ -477,10 +579,7 @@ mod tests {
         let mut im = InputManager::new();
         assert!(!im.is_key_down(KeyCode::Space));
 
-        // Simulate a key press via winit event
-        im.keyboard
-            .key_states
-            .insert(KeyCode::Space, ButtonState::Pressed);
+        im.set_key_state(KeyCode::Space, ButtonState::Pressed);
         assert!(im.is_key_pressed(KeyCode::Space));
         assert!(im.is_key_down(KeyCode::Space));
 
@@ -488,10 +587,7 @@ mod tests {
         assert!(!im.is_key_pressed(KeyCode::Space));
         assert!(im.is_key_down(KeyCode::Space));
 
-        // Release
-        im.keyboard
-            .key_states
-            .insert(KeyCode::Space, ButtonState::Released);
+        im.set_key_state(KeyCode::Space, ButtonState::Released);
         assert!(im.is_key_released(KeyCode::Space));
         assert!(!im.is_key_down(KeyCode::Space));
 
@@ -506,7 +602,8 @@ mod tests {
         assert_eq!(im.mouse_position(), (0.0, 0.0));
         assert_eq!(im.mouse_delta(), (0.0, 0.0));
 
-        // Simulate cursor move
+        // Simulate cursor move via internal mouse state
+        im.mouse = mouse::MouseState::new();
         im.mouse.position = (100.0, 200.0);
         im.mouse.delta = (100.0, 200.0);
         assert_eq!(im.mouse_position(), (100.0, 200.0));
@@ -549,7 +646,7 @@ mod tests {
     fn test_gamepad_connection() {
         let mut im = InputManager::new();
         assert!(!im.is_gamepad_connected());
-        im.set_gamepad_connected(true);
+        im.set_gamepad_connected(0, true);
         assert!(im.is_gamepad_connected());
     }
 
@@ -558,9 +655,10 @@ mod tests {
         let mut im = InputManager::new();
         assert!(!im.is_gamepad_button_down(GamepadButton::South));
 
-        im.gamepad
-            .button_states
-            .insert(GamepadButton::South, ButtonState::Pressed);
+        if let Some(pad) = im.gamepad.get_mut(0) {
+            pad.button_states
+                .insert(GamepadButton::South, ButtonState::Pressed);
+        }
         assert!(im.is_gamepad_button_pressed(GamepadButton::South));
 
         im.end_frame();
@@ -573,28 +671,15 @@ mod tests {
         let mut im = InputManager::new();
         assert_eq!(im.gamepad_axis(GamepadAxis::LeftStickX), 0.0);
 
-        im.gamepad.axes.insert(GamepadAxis::LeftStickX, 0.5);
+        im.set_gamepad_axis(GamepadAxis::LeftStickX, 0.5);
         assert!((im.gamepad_axis(GamepadAxis::LeftStickX) - 0.5).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_raw_button_mapping() {
-        assert_eq!(raw_button_to_gamepad(0), GamepadButton::South);
-        assert_eq!(raw_button_to_gamepad(1), GamepadButton::East);
-        assert_eq!(raw_button_to_gamepad(3), GamepadButton::North);
-        assert_eq!(raw_button_to_gamepad(12), GamepadButton::DPadUp);
-        assert_eq!(raw_button_to_gamepad(99), GamepadButton::South); // fallback
     }
 
     #[test]
     fn test_pressed_keys_iterator() {
         let mut im = InputManager::new();
-        im.keyboard
-            .key_states
-            .insert(KeyCode::Space, ButtonState::Pressed);
-        im.keyboard
-            .key_states
-            .insert(KeyCode::KeyW, ButtonState::Held);
+        im.set_key_state(KeyCode::Space, ButtonState::Pressed);
+        im.set_key_state(KeyCode::KeyW, ButtonState::Held);
 
         let pressed: Vec<KeyCode> = im.pressed_keys().collect();
         assert!(pressed.contains(&KeyCode::Space));
@@ -604,9 +689,7 @@ mod tests {
     #[test]
     fn test_end_frame_clears_states() {
         let mut im = InputManager::new();
-        im.keyboard
-            .key_states
-            .insert(KeyCode::KeyA, ButtonState::Pressed);
+        im.set_key_state(KeyCode::KeyA, ButtonState::Pressed);
         im.mouse
             .button_states
             .insert(MouseButton::Left, ButtonState::Pressed);
@@ -620,5 +703,74 @@ mod tests {
         assert!(!im.is_mouse_button_pressed(MouseButton::Left));
         assert_eq!(im.mouse_delta(), (0.0, 0.0));
         assert_eq!(im.scroll_delta(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_focus_tracking() {
+        let mut im = InputManager::new();
+        assert!(im.is_focused());
+        im.set_focused(false);
+        assert!(!im.is_focused());
+    }
+
+    #[test]
+    fn test_gamepad_multi_controller() {
+        let mut im = InputManager::new();
+        im.set_gamepad_connected(0, true);
+        im.set_gamepad_connected(1, true);
+        im.set_gamepad_connected(2, false);
+
+        assert_eq!(im.gamepad_count(), 2);
+        assert!(im.is_gamepad_slot_connected(0));
+        assert!(im.is_gamepad_slot_connected(1));
+        assert!(!im.is_gamepad_slot_connected(2));
+
+        if let Some(pad) = im.gamepad.get_mut(1) {
+            pad.button_states
+                .insert(GamepadButton::East, ButtonState::Pressed);
+        }
+        assert!(im.is_gamepad_button_pressed_slot(1, GamepadButton::East));
+        assert!(!im.is_gamepad_button_pressed_slot(0, GamepadButton::East));
+    }
+
+    #[test]
+    fn test_cursor_control() {
+        let mut im = InputManager::new();
+        assert!(im.cursor_visible());
+        assert!(!im.cursor_locked());
+
+        im.set_cursor_visible(false);
+        assert!(!im.cursor_visible());
+
+        im.set_cursor_locked(true);
+        assert!(im.cursor_locked());
+    }
+
+    #[test]
+    fn test_double_click() {
+        let mut im = InputManager::new();
+        // Simulate two rapid clicks
+        im.mouse.on_button_down(MouseButton::Left);
+        im.mouse.on_button_down(MouseButton::Left);
+        assert!(im.is_double_click(MouseButton::Left));
+    }
+
+    #[test]
+    fn test_gamepad_name() {
+        let mut im = InputManager::new();
+        assert!(im.gamepad_name(0).is_none());
+
+        im.set_gamepad_name(0, "Xbox Controller");
+        assert_eq!(im.gamepad_name(0), Some("Xbox Controller"));
+    }
+
+    #[test]
+    fn test_focus_loss_releases_keys() {
+        let mut im = InputManager::new();
+        im.set_key_state(KeyCode::KeyW, ButtonState::Held);
+        assert!(im.is_key_down(KeyCode::KeyW));
+
+        im.set_focused(false);
+        assert!(!im.is_key_down(KeyCode::KeyW));
     }
 }

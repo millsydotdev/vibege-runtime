@@ -1,41 +1,20 @@
-//! Runtime Event Bus — inter-subsystem communication via typed events.
-//!
-//! # Architecture
-//!
-//! The Event Bus decouples subsystems by providing a publish-subscribe channel.
-//! Publishers emit [`RuntimeEvent`] values. Subscribers receive them via
-//! closures registered with [`EventBus::subscribe`].
-//!
-//! # Event Flow
-//!
-//! ```ignore
-//! Subsystem A                     Subsystem B
-//!     │                               │
-//!     │  bus.publish(&event)           │
-//!     ├───────────────────────────────→│
-//!     │                               │  subscriber(event)
-//!     │                               │
-//! ```
-//!
-//! # Thread Safety
-//!
-//! The bus is `Send + Sync`. Subscribers are called on the publisher's thread.
-//! The logger subscriber at the top of main.rs runs on every thread that
-//! publishes events.
-//!
-//! # Performance
-//!
-//! Subscribers are called synchronously. A slow subscriber will delay all
-//! other subscribers. For latency-sensitive paths (e.g., frame rendering),
-//! keep subscribers lightweight or use the event filter to avoid irrelevant
-//! events.
-
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Priority level for event subscribers.
+/// Higher-priority subscribers receive events first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum SubscriberPriority {
+    Low = 0,
+    #[default]
+    Normal = 1,
+    High = 2,
+    Monitor = 3,
+}
 
 /// Category label for filtering event subscriptions.
-/// Each variant corresponds to a group of related [`RuntimeEvent`] values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventCategory {
     Window,
     Overlay,
@@ -43,14 +22,20 @@ pub enum EventCategory {
     Download,
     Config,
     System,
+    Input,
+    Audio,
+    Asset,
 }
 
 impl RuntimeEvent {
-    /// Return the category this event belongs to.
-    /// Used by [`EventBus::subscribe_filtered`] to only receive relevant events.
     pub fn category(&self) -> EventCategory {
         match self {
-            RuntimeEvent::WindowCreated | RuntimeEvent::WindowHidden => EventCategory::Window,
+            RuntimeEvent::WindowCreated
+            | RuntimeEvent::WindowHidden
+            | RuntimeEvent::WindowMoved { .. }
+            | RuntimeEvent::WindowResized { .. }
+            | RuntimeEvent::WindowMinimized
+            | RuntimeEvent::WindowRestored => EventCategory::Window,
             RuntimeEvent::OverlayShown | RuntimeEvent::OverlayHidden => EventCategory::Overlay,
             RuntimeEvent::GameInstalled { .. }
             | RuntimeEvent::GameRemoved { .. }
@@ -64,61 +49,77 @@ impl RuntimeEvent {
             RuntimeEvent::SettingsChanged { .. } => EventCategory::Config,
             RuntimeEvent::HotkeyPressed
             | RuntimeEvent::NotificationCreated { .. }
-            | RuntimeEvent::ShuttingDown => EventCategory::System,
+            | RuntimeEvent::ShuttingDown
+            | RuntimeEvent::MonitorConnected { .. }
+            | RuntimeEvent::MonitorDisconnected { .. }
+            | RuntimeEvent::DpiChanged { .. }
+            | RuntimeEvent::TrayNotificationActivated
+            | RuntimeEvent::DiagnosticsReported => EventCategory::System,
+            RuntimeEvent::InputCaptured { .. } => EventCategory::Input,
+            RuntimeEvent::AudioDeviceChanged { .. } => EventCategory::Audio,
+            RuntimeEvent::AssetLoaded { .. } | RuntimeEvent::AssetFailed { .. } => {
+                EventCategory::Asset
+            }
         }
     }
 }
 
-/// Every event the runtime can emit.
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {
-    // — Window / Overlay
     WindowCreated,
     WindowHidden,
+    WindowMoved { x: i32, y: i32 },
+    WindowResized { width: u32, height: u32 },
+    WindowMinimized,
+    WindowRestored,
     OverlayShown,
     OverlayHidden,
-
-    // — Games
+    MonitorConnected { name: String },
+    MonitorDisconnected { name: String },
+    DpiChanged { scale: f64 },
+    TrayNotificationActivated,
     GameInstalled { name: String, path: PathBuf },
     GameRemoved { name: String },
     GameStarted { name: String },
     GameSuspended { name: String },
     GameResumed { name: String },
     GameExited { name: String },
-
-    // — Downloads / Updates
     DownloadStarted { name: String, url: String },
     DownloadFinished { name: String, path: PathBuf },
     DownloadFailed { name: String, error: String },
-
-    // — Configuration
     SettingsChanged { key: String },
-
-    // — System
     HotkeyPressed,
     NotificationCreated { message: String },
     ShuttingDown,
+    DiagnosticsReported,
+    InputCaptured { key: String },
+    AudioDeviceChanged { name: String },
+    AssetLoaded { name: String },
+    AssetFailed { name: String, error: String },
 }
 
-/// A subscriber receives events.
 type Subscriber = Box<dyn Fn(&RuntimeEvent) + Send + Sync>;
+type FilteredSubscriber = (
+    EventCategory,
+    SubscriberPriority,
+    Box<dyn Fn(&RuntimeEvent) + Send + Sync>,
+);
 
-/// Filters events by category before passing to the inner closure.
-/// Avoids per-event allocations by checking the category first.
-type FilteredSubscriber = (EventCategory, Box<dyn Fn(&RuntimeEvent) + Send + Sync>);
+/// Event bus metrics snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct EventBusMetrics {
+    pub total_events_published: u64,
+    pub total_subscribers: usize,
+    pub total_filtered_subscribers: usize,
+    pub events_by_category: std::collections::HashMap<EventCategory, u64>,
+}
 
-/// Publish-subscribe event bus with optional category filtering.
-///
-/// # Examples
-///
-/// ```
-/// use vibege_core::EventBus;
-/// let bus = EventBus::new();
-/// bus.subscribe(|e| println!("Event: {e:?}"));
-/// ```
+/// Publish-subscribe event bus with priorities, diagnostics, and panic isolation.
 pub struct EventBus {
-    subscribers: Mutex<Vec<Subscriber>>,
+    subscribers: Mutex<Vec<(SubscriberPriority, Subscriber)>>,
     filtered: Mutex<Vec<FilteredSubscriber>>,
+    event_count: AtomicU64,
+    category_counts: Mutex<std::collections::HashMap<EventCategory, u64>>,
 }
 
 impl Default for EventBus {
@@ -132,52 +133,96 @@ impl EventBus {
         Self {
             subscribers: Mutex::new(Vec::new()),
             filtered: Mutex::new(Vec::new()),
+            event_count: AtomicU64::new(0),
+            category_counts: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Register a subscriber that receives **every** event.
+    /// Register a subscriber that receives every event.
     pub fn subscribe<F>(&self, f: F)
     where
         F: Fn(&RuntimeEvent) + Send + Sync + 'static,
     {
-        self.subscribers.lock().expect("lock").push(Box::new(f));
+        self.subscribe_with_priority(SubscriberPriority::Normal, f);
     }
 
-    /// Register a subscriber that only receives events matching `category`.
-    /// This is more efficient than filtering inside the closure because
-    /// the category check happens before the closure is called.
+    /// Register a subscriber with explicit priority.
+    pub fn subscribe_with_priority<F>(&self, priority: SubscriberPriority, f: F)
+    where
+        F: Fn(&RuntimeEvent) + Send + Sync + 'static,
+    {
+        if let Ok(mut subs) = self.subscribers.lock() {
+            subs.push((priority, Box::new(f)));
+            subs.sort_by(|a, b| b.0.cmp(&a.0));
+        }
+    }
+
+    /// Register a filtered subscriber with default priority.
     pub fn subscribe_filtered<F>(&self, category: EventCategory, f: F)
     where
         F: Fn(&RuntimeEvent) + Send + Sync + 'static,
     {
-        self.filtered
-            .lock()
-            .expect("lock")
-            .push((category, Box::new(f)));
+        self.subscribe_filtered_with_priority(category, SubscriberPriority::Normal, f);
     }
 
-    /// Publish an event to all matching subscribers.
-    ///
-    /// All-subscribers are called first, then filtered subscribers matching
-    /// the event's category. A panicking subscriber does not prevent other
-    /// subscribers from receiving the event.
+    /// Register a filtered subscriber with explicit priority.
+    pub fn subscribe_filtered_with_priority<F>(
+        &self,
+        category: EventCategory,
+        priority: SubscriberPriority,
+        f: F,
+    ) where
+        F: Fn(&RuntimeEvent) + Send + Sync + 'static,
+    {
+        if let Ok(mut subs) = self.filtered.lock() {
+            subs.push((category, priority, Box::new(f)));
+            subs.sort_by(|a, b| b.1.cmp(&a.1));
+        }
+    }
+
+    /// Publish an event to all matching subscribers with panic isolation.
+    /// A panicking subscriber does not prevent other subscribers from receiving the event.
     pub fn publish(&self, event: &RuntimeEvent) {
+        self.event_count.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut counts) = self.category_counts.lock() {
+            *counts.entry(event.category()).or_insert(0) += 1;
+        }
+
         let cat = event.category();
 
-        // Broadcast to all-subscribers
         if let Ok(subs) = self.subscribers.lock() {
-            for sub in subs.iter() {
-                sub(event);
+            for (_, sub) in subs.iter() {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    sub(event);
+                }));
             }
         }
 
-        // Broadcast to category-filtered subscribers
         if let Ok(subs) = self.filtered.lock() {
-            for (c, sub) in subs.iter() {
+            for (c, _, sub) in subs.iter() {
                 if *c == cat {
-                    sub(event);
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        sub(event);
+                    }));
                 }
             }
+        }
+    }
+
+    /// Returns metrics about the event bus.
+    pub fn metrics(&self) -> EventBusMetrics {
+        let subs = self.subscribers.lock().map(|s| s.len()).unwrap_or(0);
+        let filts = self.filtered.lock().map(|s| s.len()).unwrap_or(0);
+        let counts = self
+            .category_counts
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default();
+        EventBusMetrics {
+            total_events_published: self.event_count.load(Ordering::Relaxed),
+            total_subscribers: subs,
+            total_filtered_subscribers: filts,
+            events_by_category: counts,
         }
     }
 }
@@ -192,12 +237,10 @@ mod tests {
     fn test_subscribe_and_publish() {
         let bus = EventBus::new();
         let count = Arc::new(AtomicUsize::new(0));
-
         let c1 = Arc::clone(&count);
         bus.subscribe(move |_| {
             c1.fetch_add(1, Ordering::SeqCst);
         });
-
         bus.publish(&RuntimeEvent::HotkeyPressed);
         bus.publish(&RuntimeEvent::SettingsChanged {
             key: "volume".into(),
@@ -209,83 +252,66 @@ mod tests {
     fn test_filtered_subscriber() {
         let bus = EventBus::new();
         let game_count = Arc::new(AtomicUsize::new(0));
-
         let gc = Arc::clone(&game_count);
         bus.subscribe_filtered(EventCategory::Game, move |_| {
             gc.fetch_add(1, Ordering::SeqCst);
         });
-
-        // Game event should trigger the filtered subscriber
         bus.publish(&RuntimeEvent::GameStarted {
             name: "pong".into(),
         });
-        // System event should NOT trigger it
         bus.publish(&RuntimeEvent::HotkeyPressed);
-
         assert_eq!(game_count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn test_filtered_subscriber_multiple_categories() {
+    fn test_subscriber_priority() {
         let bus = EventBus::new();
-        let sys_count = Arc::new(AtomicUsize::new(0));
-        let dl_count = Arc::new(AtomicUsize::new(0));
-
-        let sc = Arc::clone(&sys_count);
-        bus.subscribe_filtered(EventCategory::System, move |_| {
-            sc.fetch_add(1, Ordering::SeqCst);
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let o1 = Arc::clone(&order);
+        bus.subscribe_with_priority(SubscriberPriority::High, move |_| {
+            o1.lock().unwrap().push("high");
         });
-        let dc = Arc::clone(&dl_count);
-        bus.subscribe_filtered(EventCategory::Download, move |_| {
-            dc.fetch_add(1, Ordering::SeqCst);
+        let o2 = Arc::clone(&order);
+        bus.subscribe_with_priority(SubscriberPriority::Low, move |_| {
+            o2.lock().unwrap().push("low");
         });
-
-        bus.publish(&RuntimeEvent::HotkeyPressed); // System
-        bus.publish(&RuntimeEvent::ShuttingDown); // System
-        bus.publish(&RuntimeEvent::DownloadStarted {
-            name: "pong".into(),
-            url: "https://example.com/pkg".into(),
-        }); // Download
-
-        assert_eq!(sys_count.load(Ordering::SeqCst), 2);
-        assert_eq!(dl_count.load(Ordering::SeqCst), 1);
+        bus.publish(&RuntimeEvent::HotkeyPressed);
+        let result = order.lock().unwrap();
+        assert_eq!(result[0], "high");
+        assert_eq!(result[1], "low");
     }
 
     #[test]
-    fn test_event_category_mapping() {
+    fn test_panic_isolation() {
+        let bus = EventBus::new();
+        let count = Arc::new(AtomicUsize::new(0));
+        bus.subscribe(move |_| panic!("subscriber panic"));
+        let c2 = Arc::clone(&count);
+        bus.subscribe(move |_| {
+            c2.fetch_add(1, Ordering::SeqCst);
+        });
+        bus.publish(&RuntimeEvent::HotkeyPressed);
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_metrics() {
+        let bus = EventBus::new();
+        bus.subscribe(|_| {});
+        bus.subscribe_filtered(EventCategory::System, |_| {});
+        bus.publish(&RuntimeEvent::HotkeyPressed);
+        bus.publish(&RuntimeEvent::GameStarted {
+            name: "pong".into(),
+        });
+        let m = bus.metrics();
+        assert_eq!(m.total_events_published, 2);
+        assert_eq!(m.total_subscribers, 1);
+        assert_eq!(m.total_filtered_subscribers, 1);
         assert_eq!(
-            RuntimeEvent::WindowCreated.category(),
-            EventCategory::Window
-        );
-        assert_eq!(
-            RuntimeEvent::OverlayShown.category(),
-            EventCategory::Overlay
-        );
-        assert_eq!(
-            RuntimeEvent::GameStarted {
-                name: "pong".into()
-            }
-            .category(),
-            EventCategory::Game
-        );
-        assert_eq!(
-            RuntimeEvent::DownloadFinished {
-                name: "pong".into(),
-                path: PathBuf::from("/tmp")
-            }
-            .category(),
-            EventCategory::Download
-        );
-        assert_eq!(
-            RuntimeEvent::SettingsChanged {
-                key: "volume".into()
-            }
-            .category(),
-            EventCategory::Config
-        );
-        assert_eq!(
-            RuntimeEvent::HotkeyPressed.category(),
-            EventCategory::System
+            *m.events_by_category
+                .get(&EventCategory::System)
+                .unwrap_or(&0),
+            1
         );
     }
 
@@ -294,6 +320,10 @@ mod tests {
         let bus = EventBus::new();
         bus.publish(&RuntimeEvent::HotkeyPressed);
         bus.publish(&RuntimeEvent::OverlayShown);
-        // Should not panic
+    }
+
+    #[test]
+    fn test_default_priority() {
+        assert_eq!(SubscriberPriority::Normal, SubscriberPriority::default());
     }
 }

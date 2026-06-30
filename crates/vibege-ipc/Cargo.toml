@@ -8,15 +8,10 @@ description = "IPC bridge — runtime to game process communication"
 
 [dependencies]
 vibege-core = { path = "../vibege-core" }
-rmp-serde = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 thiserror = "2"
-
-[target.'cfg(unix)'.dependencies]
-
-[target.'cfg(windows)'.dependencies]
 
 [dev-dependencies]
 tempfile = "3"

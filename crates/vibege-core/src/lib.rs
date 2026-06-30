@@ -41,15 +41,21 @@
 
 pub mod config;
 pub mod crash;
+pub mod diagnostics;
 pub mod error;
 pub mod event;
 pub mod lifecycle;
 pub mod logging;
 pub mod metrics;
+pub mod services;
+pub mod state_machine;
 
 pub use config::{LogLevel, MergedConfig, RuntimeConfig, WindowConfig, load_config};
 pub use crash::install_panic_hook;
+pub use diagnostics::{Diagnostics, HealthReport, HealthStatus, RuntimeHealth};
 pub use error::{ErrorCode, Result, RuntimeError};
-pub use event::{EventBus, RuntimeEvent};
+pub use event::{EventBus, EventBusMetrics, EventCategory, RuntimeEvent, SubscriberPriority};
 pub use lifecycle::{App, AppState, LifecycleHandler, Signal};
 pub use metrics::{MetricsRegistry, MetricsSnapshot};
+pub use services::{ServiceId, ServiceRegistry, ServiceStatus};
+pub use state_machine::{RuntimeState, StateMachine, TransitionError};

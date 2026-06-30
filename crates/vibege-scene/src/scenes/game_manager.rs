@@ -2,6 +2,7 @@ use mlua::{Function, Lua};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::{info, warn};
+use vibege_asset::AssetManager;
 use vibege_audio::AudioSystem;
 use vibege_core::{EventBus, RuntimeEvent};
 use vibege_input::InputManager;
@@ -33,10 +34,28 @@ impl GameSession {
         renderer: &Arc<Renderer>,
         input: &Arc<Mutex<InputManager>>,
         audio: &Option<Arc<AudioSystem>>,
+        assets: &Arc<AssetManager>,
         event_bus: Option<Arc<EventBus>>,
+        screen_width: u32,
+        screen_height: u32,
+        engine_version: &str,
     ) -> Result<Self, String> {
         let lua = Lua::new();
-        let vibege = vibege_sdk::register_game_api(&lua, renderer, input, audio)?;
+
+        // Sandbox: remove dangerous globals from the Lua environment
+        sandbox_lua(&lua);
+
+        let vibege = vibege_sdk::register_game_api(
+            &lua,
+            renderer,
+            input,
+            audio,
+            assets,
+            &event_bus,
+            screen_width,
+            screen_height,
+            engine_version,
+        )?;
         lua.globals()
             .set("vibege", vibege)
             .map_err(|e| e.to_string())?;
@@ -120,5 +139,19 @@ impl GameSession {
         } else {
             None
         }
+    }
+}
+
+/// Remove dangerous global functions from the Lua environment.
+///
+/// Luau (used by mlua) does not include `io`, `os`, `loadfile`, or `dofile`
+/// by default, but we explicitly nil them to be safe and future-proof.
+fn sandbox_lua(lua: &mlua::Lua) {
+    let globals = lua.globals();
+    let dangerous = [
+        "io", "os", "loadfile", "dofile", "require", "package", "debug",
+    ];
+    for name in &dangerous {
+        globals.set(*name, mlua::Value::Nil).ok();
     }
 }

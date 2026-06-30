@@ -4,12 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Window manager — native window creation, event loop, window modes"
+description = "Window manager — native window creation, event loop, window modes, overlay manager, multi-monitor DPI support"
 
 [dependencies]
 vibege-core = { path = "../vibege-core" }
 winit = "0.30"
 tracing = "0.1"
 thiserror = "2"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+]
 
 [dev-dependencies]

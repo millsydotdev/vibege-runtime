@@ -90,16 +90,20 @@ impl SettingsScene {
                 position: self.position.clone(),
                 width: 800,
                 height: 600,
+                ..Default::default()
             },
             audio: vibege_config::AudioConfig {
                 volume: self.volume,
+                ..Default::default()
             },
             general: vibege_config::GeneralConfig {
                 startup_behavior: self.startup.clone(),
                 performance_mode: self.perf.clone(),
                 first_run_complete: true,
                 backend_url: "http://localhost:3000/api/v1".into(),
+                ..Default::default()
             },
+            ..Default::default()
         });
         self.dirty = false;
         info!("Settings saved");

@@ -19,6 +19,8 @@ vibege-suspension = { path = "../vibege-suspension" }
 vibege-tray = { path = "../vibege-tray" }
 vibege-config = { path = "../vibege-config" }
 vibege-scene = { path = "../vibege-scene" }
+vibege-asset = { path = "../vibege-asset" }
+vibege-window = { path = "../vibege-window" }
 winit = "0.30"
 pollster = "0.4"
 tracing = "0.1"

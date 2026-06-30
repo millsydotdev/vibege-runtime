@@ -8,6 +8,7 @@ description = "GPU-accelerated 2D renderer using wgpu"
 
 [dependencies]
 vibege-core = { path = "../vibege-core" }
+vibege-asset = { path = "../vibege-asset" }
 winit = "0.30"
 wgpu = "22"
 image = "0.25"

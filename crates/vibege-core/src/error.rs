@@ -24,6 +24,7 @@ impl ErrorCode {
 
     pub const SHUTDOWN_TIMEOUT: Self = Self(3001);
     pub const SIGNAL_HANDLER_ERROR: Self = Self(3002);
+    pub const INVALID_STATE_TRANSITION: Self = Self(3003);
 
     pub const PANIC: Self = Self(9001);
     pub const INTERNAL: Self = Self(9002);

@@ -7,5 +7,14 @@
 )]
 
 pub mod input_helper;
+pub mod library;
+pub mod runtime;
 pub mod scene;
 pub mod scenes;
+pub mod store;
+pub mod ui_helper;
+
+pub use scene::{
+    Scene, SceneAction, SceneContext, SceneId, SceneResult, kind::SceneKind, manager::SceneManager,
+    message::SceneMessage,
+};

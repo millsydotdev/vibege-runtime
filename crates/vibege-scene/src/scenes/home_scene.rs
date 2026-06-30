@@ -1,3 +1,4 @@
+use crate::input_helper::InputState;
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use std::path::PathBuf;
 use tracing::info;
@@ -75,13 +76,6 @@ impl HomeScene {
         ctx.renderer.draw_text(x, y, s, sz, r, g, b);
     }
 
-    fn input_pressed(&self, ctx: &SceneContext, key: &str) -> bool {
-        ctx.input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code(key))
-    }
-
     fn scan_installed_games(&mut self) {
         if self.has_scanned {
             return;
@@ -129,7 +123,7 @@ impl HomeScene {
         }
     }
 
-    fn launch_selected(&self, ctx: &mut SceneContext) -> SceneResult {
+    fn launch_selected(&self, _ctx: &mut SceneContext) -> SceneResult {
         let Some(game) = self.entries.get(self.selection) else {
             return Ok(SceneAction::Continue);
         };
@@ -143,9 +137,7 @@ impl HomeScene {
             ));
             let game_scene = Box::new(super::game_scene::GameScene::new(
                 source.to_string(),
-                ctx.renderer.clone(),
-                ctx.input.clone(),
-                None, // audio, will be passed through context later
+                game.name.clone(),
             ));
             return Ok(SceneAction::Push(game_scene));
         }
@@ -155,12 +147,8 @@ impl HomeScene {
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => {
-                    let game_scene = Box::new(super::game_scene::GameScene::new(
-                        source,
-                        ctx.renderer.clone(),
-                        ctx.input.clone(),
-                        None,
-                    ));
+                    let game_scene =
+                        Box::new(super::game_scene::GameScene::new(source, game.name.clone()));
                     Ok(SceneAction::Push(game_scene))
                 }
                 Err(e) => {
@@ -227,27 +215,29 @@ impl Scene for HomeScene {
     }
 
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
-        if self.input_pressed(ctx, "up") && self.selection > 0 {
+        let inp = InputState::new(&ctx.input, &["up", "down", "enter", "space", "s", "l", "o"]);
+
+        if inp.pressed(0) && self.selection > 0 {
             self.selection -= 1;
         }
-        if self.input_pressed(ctx, "down") && self.selection + 1 < self.entries.len() {
+        if inp.pressed(1) && self.selection + 1 < self.entries.len() {
             self.selection += 1;
         }
-        if self.input_pressed(ctx, "enter") || self.input_pressed(ctx, "space") {
+        if inp.pressed(2) || inp.pressed(3) {
             return self.launch_selected(ctx);
         }
-        if self.input_pressed(ctx, "s") {
+        if inp.pressed(4) {
             return Ok(SceneAction::Push(Box::new(
                 super::settings_scene::SettingsScene::new(),
             )));
         }
-        if self.input_pressed(ctx, "l") {
+        if inp.pressed(5) {
             let backend = ctx.config.get().general.backend_url;
             return Ok(SceneAction::Push(Box::new(
-                super::library_scene::LibraryScene::new().with_updates(&backend),
+                super::library_scene::LibraryScene::new(backend.clone()),
             )));
         }
-        if self.input_pressed(ctx, "o") {
+        if inp.pressed(6) {
             let backend = ctx.config.get().general.backend_url;
             return Ok(SceneAction::Push(Box::new(
                 super::store_scene::StoreScene::new(backend),

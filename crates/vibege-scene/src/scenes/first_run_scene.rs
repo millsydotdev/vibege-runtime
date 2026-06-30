@@ -89,16 +89,20 @@ impl FirstRunScene {
                 position: self.position.clone(),
                 width: 800,
                 height: 600,
+                ..Default::default()
             },
             audio: vibege_config::AudioConfig {
                 volume: self.volume,
+                ..Default::default()
             },
             general: vibege_config::GeneralConfig {
                 startup_behavior: self.startup.clone(),
                 performance_mode: self.perf.clone(),
                 first_run_complete: true,
                 backend_url: "http://localhost:3000/api/v1".into(),
+                ..Default::default()
             },
+            ..Default::default()
         });
     }
 
@@ -125,31 +129,15 @@ impl Scene for FirstRunScene {
     }
 
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
-        let up = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("up"));
-        let down = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("down"));
-        let left = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("left"));
-        let right = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("right"));
-        let enter = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("enter"));
+        let inp = crate::input_helper::InputState::new(
+            &ctx.input,
+            &["up", "down", "left", "right", "enter"],
+        );
+        let up = inp.pressed(0);
+        let down = inp.pressed(1);
+        let left = inp.pressed(2);
+        let right = inp.pressed(3);
+        let enter = inp.pressed(4);
 
         match self.step {
             1 => {

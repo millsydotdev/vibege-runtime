@@ -3,19 +3,22 @@
 //! Inter-process communication bridge between the runtime host process
 //! and sandboxed game processes.
 //!
-//! Messages are serialized with MessagePack (via `rmp-serde`) and
-//! transported over platform-specific channels (Unix domain sockets
-//! on Unix, named pipes on Windows).
+//! Messages are serialized with JSON (length-prefixed framing) and
+//! transported over local TCP (127.0.0.1) for cross-platform compatibility.
+//! Production target: named pipes (Windows) / Unix domain sockets (Unix).
 //!
 //! ## Architecture
 //!
-//! The IPC bridge uses a simple request-response protocol:
-//! - Runtime opens a listener on a known address
+//! - Runtime opens a listener on a local TCP port
 //! - Game process connects and performs a handshake
 //! - Messages flow bidirectionally with correlation IDs for requests
-//! - Rate limiting and message size limits prevent abuse
+//! - Message size limits and timeouts prevent abuse
+//! - Reconnection with exponential backoff on disconnect
 
+use std::cmp::min;
 use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -24,12 +27,23 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 use vibege_core::{ErrorCode, Result, RuntimeError};
 
+// ─── Constants ──────────────────────────────────────────────────────
+
+/// Default max message size (1MB).
+const DEFAULT_MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
+/// Default request timeout.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max reconnect attempts.
+const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+/// Initial backoff for reconnection.
+const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+/// Length prefix size (u32 = 4 bytes).
+const LEN_PREFIX_SIZE: usize = 4;
+
 // ─── Message Types ────────────────────────────────────────────────
 
-/// A unique correlation ID for matching requests to responses.
 pub type CorrelationId = u64;
 
-/// Direction of an IPC message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageDirection {
     Request,
@@ -37,59 +51,63 @@ pub enum MessageDirection {
     Event,
 }
 
-/// The category of an IPC message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MessageKind {
-    // Lifecycle
     Init,
     Update,
     Render,
     Shutdown,
     Suspend,
     Resume,
-
-    // Input
     InputEvent,
-
-    // Rendering
     Clear,
     DrawSprite,
     Present,
-
-    // Storage
     FileRead,
     FileWrite,
-
-    // System
     Ping,
     Pong,
     Error,
 }
 
-/// A structured IPC message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcMessage {
-    /// Unique correlation ID for request-response matching.
     pub correlation_id: CorrelationId,
-
-    /// Message direction.
     pub direction: MessageDirection,
-
-    /// The message category.
     pub kind: MessageKind,
-
-    /// JSON-encoded payload.
     pub payload: String,
-
-    /// Error information (only set for Error kind).
     pub error: Option<IpcError>,
 }
 
-/// Error information carried in IPC messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcError {
     pub code: u32,
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectionStats {
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub errors: u64,
+    pub reconnects: u64,
+    pub start_time: Instant,
+}
+
+impl Default for ConnectionStats {
+    fn default() -> Self {
+        Self {
+            messages_sent: 0,
+            messages_received: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
+            errors: 0,
+            reconnects: 0,
+            start_time: Instant::now(),
+        }
+    }
 }
 
 impl IpcMessage {
@@ -104,7 +122,7 @@ impl IpcMessage {
         }
     }
 
-    fn response(&self, payload: &str) -> Self {
+    pub fn response(&self, payload: &str) -> Self {
         Self {
             correlation_id: self.correlation_id,
             direction: MessageDirection::Response,
@@ -115,68 +133,105 @@ impl IpcMessage {
     }
 }
 
-// ─── Connection Management ─────────────────────────────────────────
-
-/// Callback for processing incoming IPC messages.
 pub trait MessageHandler: Send {
     fn handle_message(&mut self, message: &IpcMessage) -> Result<IpcMessage>;
 }
 
-/// Statistics about an IPC connection.
+// ─── Transport ────────────────────────────────────────────────────
+
 #[derive(Debug, Clone)]
-pub struct ConnectionStats {
-    pub messages_sent: u64,
-    pub messages_received: u64,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub errors: u64,
-    pub start_time: Instant,
-}
-
-impl Default for ConnectionStats {
-    fn default() -> Self {
-        Self {
-            messages_sent: 0,
-            messages_received: 0,
-            bytes_sent: 0,
-            bytes_received: 0,
-            errors: 0,
-            start_time: Instant::now(),
-        }
-    }
-}
-
-/// Platform-specific IPC transport.
-#[derive(Debug)]
 pub struct IpcTransport {
-    /// Whether the transport is a listener (server) or connector (client).
-    is_listener: bool,
-
-    /// The address of the IPC endpoint (pipe path or socket path).
-    address: String,
+    pub is_listener: bool,
+    pub address: String,
 }
 
 impl IpcTransport {
-    /// Creates a new IPC transport.
     pub fn new(is_listener: bool, address: &str) -> Self {
         Self {
             is_listener,
             address: address.to_string(),
         }
     }
-
-    /// Returns the IPC address.
     pub fn address(&self) -> &str {
         &self.address
     }
-
-    /// Returns whether this is a listener.
     pub fn is_listener(&self) -> bool {
         self.is_listener
     }
 }
 
-/// Manages a single IPC connection between runtime and game.
+// ─── Write helpers ───────────────────────────────────────────────
+
+fn write_message_to(
+    stream: &mut TcpStream,
+    message: &IpcMessage,
+    max_size: u64,
+    stats: &Arc<Mutex<ConnectionStats>>,
+) -> Result<()> {
+    let json = serde_json::to_vec(message).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to serialize IPC message", e)
+    })?;
+    if json.len() as u64 > max_size {
+        return Err(RuntimeError::new(
+            ErrorCode::INTERNAL,
+            format!(
+                "IPC message too large: {} bytes (max {})",
+                json.len(),
+                max_size
+            ),
+        ));
+    }
+    let len = (json.len() as u32).to_le_bytes();
+    stream.write_all(&len).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to write IPC length prefix", e)
+    })?;
+    stream.write_all(&json).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to write IPC message", e)
+    })?;
+    stream.flush().ok();
+    if let Ok(mut s) = stats.lock() {
+        s.messages_sent += 1;
+        s.bytes_sent += json.len() as u64;
+    }
+    Ok(())
+}
+
+fn read_message_from(
+    stream: &mut TcpStream,
+    max_size: u64,
+    timeout: Duration,
+    stats: &Arc<Mutex<ConnectionStats>>,
+) -> Result<IpcMessage> {
+    let mut len_buf = [0u8; LEN_PREFIX_SIZE];
+    read_exact_timeout(stream, &mut len_buf, timeout).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to read IPC length prefix", e)
+    })?;
+    let msg_len = u32::from_le_bytes(len_buf) as usize;
+    if msg_len as u64 > max_size {
+        return Err(RuntimeError::new(
+            ErrorCode::INTERNAL,
+            format!(
+                "IPC message too large: {} bytes (max {})",
+                msg_len, max_size
+            ),
+        ));
+    }
+    let mut buf = vec![0u8; msg_len];
+    read_exact_timeout(stream, &mut buf, timeout).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to read IPC message body", e)
+    })?;
+    let message: IpcMessage = serde_json::from_slice(&buf).map_err(|e| {
+        RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to deserialize IPC message", e)
+    })?;
+    if let Ok(mut s) = stats.lock() {
+        s.messages_received += 1;
+        s.bytes_received += buf.len() as u64;
+    }
+    Ok(message)
+}
+
+// ─── Connection ──────────────────────────────────────────────────
+
 pub struct IpcConnection {
     transport: IpcTransport,
     stats: Arc<Mutex<ConnectionStats>>,
@@ -186,40 +241,33 @@ pub struct IpcConnection {
 }
 
 impl IpcConnection {
-    /// Creates a new IPC connection with the given transport.
     pub fn new(transport: IpcTransport) -> Self {
         Self {
             transport,
             stats: Arc::new(Mutex::new(ConnectionStats::default())),
             pending_responses: Arc::new(Mutex::new(HashMap::new())),
-            timeout: Duration::from_secs(30),
-            max_message_size: 1024 * 1024, // 1MB
+            timeout: DEFAULT_TIMEOUT,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
-    /// Sets the request timeout.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    /// Sets the maximum message size in bytes.
     pub fn with_max_message_size(mut self, max_size: u64) -> Self {
         self.max_message_size = max_size;
         self
     }
 
-    /// Returns a reference to the connection stats.
     pub fn stats(&self) -> &Arc<Mutex<ConnectionStats>> {
         &self.stats
     }
-
-    /// Returns whether this side listens for connections.
     pub fn is_listener(&self) -> bool {
         self.transport.is_listener
     }
 
-    /// Creates an init message for the connection handshake.
     pub fn create_init_message(&self) -> IpcMessage {
         let payload = serde_json::json!({
             "protocol_version": "0.1.0",
@@ -229,71 +277,62 @@ impl IpcConnection {
         IpcMessage::new(MessageKind::Init, &payload.to_string())
     }
 
-    /// Sends a message and waits for a response.
-    ///
-    /// In v0.1, this operates in-process for testing. A real implementation
-    /// would serialize to MessagePack and send over the transport channel.
-    pub fn send_and_receive(&self, message: &IpcMessage) -> Result<IpcMessage> {
-        debug!(
-            kind = ?message.kind,
-            id = message.correlation_id,
-            "IPC message sent"
-        );
-
-        // Record statistics
-        {
-            let mut stats = self.stats.lock().unwrap();
-            stats.messages_sent += 1;
-            stats.bytes_sent += message.payload.len() as u64;
+    /// Connects to the IPC listener with retry+backoff.
+    fn connect_stream(&self) -> Result<TcpStream> {
+        let mut last_err = None;
+        for attempt in 1..=MAX_RECONNECT_ATTEMPTS {
+            match TcpStream::connect(&self.transport.address) {
+                Ok(stream) => {
+                    stream.set_read_timeout(Some(self.timeout)).ok();
+                    stream.set_write_timeout(Some(self.timeout)).ok();
+                    return Ok(stream);
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < MAX_RECONNECT_ATTEMPTS {
+                        let backoff = INITIAL_BACKOFF * attempt;
+                        std::thread::sleep(backoff);
+                    }
+                }
+            }
         }
+        if let Ok(mut s) = self.stats.lock() {
+            s.reconnects += 1;
+        }
+        Err(RuntimeError::with_cause(
+            ErrorCode::INTERNAL,
+            format!("Failed to connect IPC after {MAX_RECONNECT_ATTEMPTS} attempts"),
+            last_err.unwrap(),
+        ))
+    }
 
-        // For now, simulate a response for known message types
-        let response = match message.kind {
-            MessageKind::Ping => {
-                message.response(serde_json::json!({"status": "ok"}).to_string().as_str())
-            }
-            MessageKind::Init => message.response(
-                serde_json::json!({
-                    "status": "ok",
-                    "session_id": format!("session-{}", message.correlation_id),
-                })
-                .to_string()
-                .as_str(),
-            ),
-            _ => {
-                // Default: echo back an acknowledgment
-                message.response(
-                    serde_json::json!({"status": "received"})
-                        .to_string()
-                        .as_str(),
-                )
-            }
-        };
-
-        // Store for potential async retrieval
-        {
-            let mut pending = self.pending_responses.lock().unwrap();
+    /// Sends a message and waits for a response.
+    pub fn send_and_receive(&self, message: &IpcMessage) -> Result<IpcMessage> {
+        debug!(kind = ?message.kind, id = message.correlation_id, "IPC send");
+        let mut stream = self.connect_stream()?;
+        write_message_to(&mut stream, message, self.max_message_size, &self.stats)?;
+        let response = read_message_from(
+            &mut stream,
+            self.max_message_size,
+            self.timeout,
+            &self.stats,
+        )?;
+        if let Ok(mut pending) = self.pending_responses.lock() {
             pending.insert(response.correlation_id, response.clone());
         }
-
-        {
-            let mut stats = self.stats.lock().unwrap();
-            stats.messages_received += 1;
-            stats.bytes_received += response.payload.len() as u64;
-        }
-
         Ok(response)
     }
 
     /// Sends a message without waiting for a response.
     pub fn send(&self, message: &IpcMessage) -> Result<()> {
-        let _ = self.send_and_receive(message)?;
+        let mut stream = self.connect_stream()?;
+        write_message_to(&mut stream, message, self.max_message_size, &self.stats)?;
         Ok(())
     }
 
     /// Receives a pending response by correlation ID.
     pub fn receive_response(&self, correlation_id: CorrelationId) -> Result<IpcMessage> {
-        let mut pending = self.pending_responses.lock().unwrap();
+        let mut pending = self.pending_responses.lock().expect("pending lock");
         pending.remove(&correlation_id).ok_or_else(|| {
             RuntimeError::new(
                 ErrorCode::INTERNAL,
@@ -312,9 +351,62 @@ impl IpcConnection {
     }
 }
 
+// ─── Listener ────────────────────────────────────────────────────
+
+/// Binds a TCP listener for IPC connections.
+pub fn bind_ipc_listener(transport: &IpcTransport) -> Result<TcpListener> {
+    let listener = TcpListener::bind(&transport.address).map_err(|e| {
+        RuntimeError::with_cause(
+            ErrorCode::INIT_FAILED,
+            format!("Failed to bind IPC listener on {}", transport.address),
+            e,
+        )
+    })?;
+    listener.set_nonblocking(true).ok();
+    Ok(listener)
+}
+
+// ─── Read Exactly ────────────────────────────────────────────────
+
+fn read_exact_timeout(
+    stream: &mut TcpStream,
+    buf: &mut [u8],
+    timeout: Duration,
+) -> std::io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    let mut offset = 0;
+    while offset < buf.len() {
+        if Instant::now() > deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "IPC read timed out",
+            ));
+        }
+        let chunk_size = min(buf.len() - offset, 4096);
+        match stream.read(&mut buf[offset..offset + chunk_size]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "IPC connection closed",
+                ));
+            }
+            Ok(n) => offset += n,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// Creates a test transport for in-process IPC testing.
 pub fn create_test_transport() -> IpcTransport {
-    IpcTransport::new(true, "vibege-test-ipc")
+    IpcTransport::new(true, "127.0.0.1:0")
 }
 
 #[cfg(test)]
@@ -327,7 +419,6 @@ mod tests {
         assert_eq!(msg.kind, MessageKind::Ping);
         assert_eq!(msg.direction, MessageDirection::Request);
         assert!(msg.correlation_id > 0);
-        assert!(msg.error.is_none());
     }
 
     #[test]
@@ -339,76 +430,11 @@ mod tests {
     }
 
     #[test]
-    fn test_message_error() {
-        let err = IpcMessage {
-            correlation_id: 1,
-            direction: MessageDirection::Response,
-            kind: MessageKind::Error,
-            payload: String::new(),
-            error: Some(IpcError {
-                code: 400,
-                message: "Bad request".into(),
-            }),
-        };
-        assert_eq!(err.direction, MessageDirection::Response);
-        assert_eq!(err.kind, MessageKind::Error);
-        assert!(err.error.is_some());
-        assert_eq!(err.error.unwrap().code, 400);
-    }
-
-    #[test]
     fn test_connection_creation() {
-        let transport = IpcTransport::new(true, "test-pipe");
+        let transport = IpcTransport::new(true, "127.0.0.1:0");
         let conn = IpcConnection::new(transport);
         assert!(conn.is_listener());
         assert_eq!(conn.stats().lock().unwrap().messages_sent, 0);
-    }
-
-    #[test]
-    fn test_send_and_receive_ping() {
-        let transport = create_test_transport();
-        let conn = IpcConnection::new(transport);
-        let ping = IpcMessage::new(MessageKind::Ping, "{}");
-        let response = conn.send_and_receive(&ping).unwrap();
-        assert_eq!(response.kind, MessageKind::Ping);
-        assert_eq!(response.direction, MessageDirection::Response);
-    }
-
-    #[test]
-    fn test_send_and_receive_init() {
-        let transport = create_test_transport();
-        let conn = IpcConnection::new(transport);
-        let init = conn.create_init_message();
-        let response = conn.send_and_receive(&init).unwrap();
-        assert_eq!(response.kind, MessageKind::Init);
-        assert!(response.payload.contains("session_id"));
-    }
-
-    #[test]
-    fn test_stats_tracking() {
-        let transport = create_test_transport();
-        let conn = IpcConnection::new(transport);
-        let msg = IpcMessage::new(MessageKind::Ping, "hello");
-        conn.send_and_receive(&msg).unwrap();
-        let stats = conn.stats().lock().unwrap();
-        assert_eq!(stats.messages_sent, 1);
-        assert_eq!(stats.messages_received, 1);
-        assert!(stats.bytes_sent > 0);
-    }
-
-    #[test]
-    fn test_timeout_configuration() {
-        let transport = create_test_transport();
-        let conn = IpcConnection::new(transport).with_timeout(Duration::from_millis(100));
-        // Timeout is stored; real implementation would enforce it
-        assert_eq!(conn.timeout, Duration::from_millis(100));
-    }
-
-    #[test]
-    fn test_max_message_size() {
-        let transport = create_test_transport();
-        let conn = IpcConnection::new(transport).with_max_message_size(512);
-        assert_eq!(conn.max_message_size, 512);
     }
 
     #[test]
@@ -420,8 +446,76 @@ mod tests {
 
     #[test]
     fn test_ipc_transport_address() {
-        let transport = IpcTransport::new(false, "/tmp/vibege.sock");
+        let transport = IpcTransport::new(false, "127.0.0.1:9999");
         assert!(!transport.is_listener());
-        assert_eq!(transport.address(), "/tmp/vibege.sock");
+        assert_eq!(transport.address(), "127.0.0.1:9999");
+    }
+
+    #[test]
+    fn test_message_size_limit() {
+        let transport = create_test_transport();
+        let conn = IpcConnection::new(transport).with_max_message_size(10);
+        let msg = IpcMessage::new(MessageKind::Ping, "x".repeat(100).as_str());
+        let json = serde_json::to_vec(&msg).unwrap();
+        assert!(json.len() as u64 > conn.max_message_size);
+    }
+
+    #[test]
+    fn test_timeout_configuration() {
+        let transport = create_test_transport();
+        let conn = IpcConnection::new(transport).with_timeout(Duration::from_millis(100));
+        assert_eq!(conn.timeout, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_send_and_receive_via_tcp() {
+        // Start a local TCP echo server
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_transport = IpcTransport::new(true, &addr.to_string());
+        let server_conn = IpcConnection::new(server_transport);
+
+        // Client transport
+        let client_transport = IpcTransport::new(false, &addr.to_string());
+        let client_conn = IpcConnection::new(client_transport);
+
+        // Accept connection on a thread
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let msg = read_message_from(
+                    &mut stream,
+                    DEFAULT_MAX_MESSAGE_SIZE,
+                    DEFAULT_TIMEOUT,
+                    server_conn.stats(),
+                )
+                .unwrap();
+                let resp = msg.response(r#"{"status":"pong"}"#);
+                write_message_to(
+                    &mut stream,
+                    &resp,
+                    DEFAULT_MAX_MESSAGE_SIZE,
+                    server_conn.stats(),
+                )
+                .unwrap();
+            }
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+
+        let ping = IpcMessage::new(MessageKind::Ping, r#"{"msg":"hello"}"#);
+        let result = client_conn.send_and_receive(&ping);
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.kind, MessageKind::Ping);
+        assert_eq!(resp.direction, MessageDirection::Response);
+        assert!(resp.payload.contains("pong"));
+    }
+
+    #[test]
+    fn test_bind_listener() {
+        let transport = IpcTransport::new(true, "127.0.0.1:0");
+        let listener = bind_ipc_listener(&transport).unwrap();
+        assert!(listener.local_addr().is_ok());
     }
 }

@@ -1,97 +1,43 @@
+use std::sync::Arc;
+
+use crate::input_helper::InputState;
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
-use std::io::Read;
+use crate::store::manager::StoreManager;
+use crate::store::models::{SearchQuery, SortField};
 use tracing::info;
 
-fn urlencoding(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c.to_string(),
-            ' ' => "+".into(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
-}
-
-fn download_package(backend: &str, id: &str) -> Result<Vec<u8>, String> {
-    let mut data: Vec<u8> = Vec::new();
-    ureq::get(&format!("{backend}/registry/{id}/download"))
-        .call()
-        .map_err(|e| format!("Download HTTP: {e}"))?
-        .into_body()
-        .into_reader()
-        .read_to_end(&mut data)
-        .map_err(|e| format!("Download read: {e}"))?;
-    Ok(data)
-}
-
 pub struct StoreScene {
-    games: Vec<serde_json::Value>,
+    manager: Arc<StoreManager>,
     selection: usize,
-    loading: bool,
-    error: Option<String>,
-    backend: String,
-    search: String,
+    section_selection: usize,
+    search_text: String,
     search_mode: bool,
     search_cursor: usize,
+    #[allow(dead_code)]
     page: u32,
-    total: u32,
+    active_section: usize,
+    show_sections: bool,
 }
 
 impl StoreScene {
     pub fn new(backend: String) -> Self {
         Self {
-            games: Vec::new(),
+            manager: Arc::new(StoreManager::new(backend)),
             selection: 0,
-            loading: true,
-            error: None,
-            backend,
-            search: String::new(),
+            section_selection: 0,
+            search_text: String::new(),
             search_mode: false,
             search_cursor: 0,
             page: 0,
-            total: 0,
+            active_section: 0,
+            show_sections: true,
         }
-    }
-
-    fn fetch(&mut self, page: u32) {
-        let offset = page * 20;
-        let url = if self.search.is_empty() {
-            format!("{}/registry?limit=20&offset={}", self.backend, offset)
-        } else {
-            format!(
-                "{}/registry?limit=20&offset={}&search={}",
-                self.backend,
-                offset,
-                urlencoding(&self.search)
-            )
-        };
-        self.loading = true;
-        let mut body = String::new();
-        match ureq::get(&url).call() {
-            Ok(resp) => {
-                if resp
-                    .into_body()
-                    .into_reader()
-                    .read_to_string(&mut body)
-                    .is_ok()
-                {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                        self.games = json["packages"].as_array().cloned().unwrap_or_default();
-                        self.total = json["total"].as_u64().unwrap_or(0) as u32;
-                        self.page = page;
-                        self.selection = 0;
-                    }
-                }
-                self.error = None;
-            }
-            Err(e) => self.error = Some(format!("HTTP: {e}")),
-        }
-        self.loading = false;
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
         ctx.renderer.set_clear(0.05, 0.05, 0.15, 1.0);
     }
+
     fn rect(
         &self,
         ctx: &mut SceneContext,
@@ -106,6 +52,7 @@ impl StoreScene {
     ) {
         ctx.renderer.draw_rect(x, y, w, h, r, g, b, a);
     }
+
     fn text(
         &self,
         ctx: &mut SceneContext,
@@ -127,76 +74,52 @@ impl Scene for StoreScene {
     }
 
     fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
-        info!("StoreScene: fetching from {}", self.backend);
-        self.fetch(0);
+        info!("StoreScene: fetching from {}", self.manager.backend_url());
+        self.manager.fetch(0);
         Ok(SceneAction::Continue)
     }
 
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
-        if self.loading {
+        if self.manager.loading() {
             return Ok(SceneAction::Continue);
         }
 
-        let up = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("up"));
-        let down = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("down"));
-        let enter = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("enter"));
-        let esc = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("escape"));
-        let s = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("s"));
-        let r = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("r"));
-        let left = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("left"));
-        let right = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("right"));
+        let inp = InputState::new(
+            &ctx.input,
+            &[
+                "up", "down", "enter", "escape", "s", "r", "left", "right", "f5",
+            ],
+        );
 
-        if esc && !self.search_mode {
+        if inp.pressed(4) && !self.search_mode {
             return Ok(SceneAction::Pop);
         }
-        if esc && self.search_mode {
+
+        if inp.pressed(4) /* esc */ && self.search_mode {
             self.search_mode = false;
-            self.search.clear();
+            self.search_text.clear();
             return Ok(SceneAction::Continue);
         }
 
-        if s && !self.search_mode {
+        if inp.pressed(5) /* s */ && !self.search_mode {
             self.search_mode = true;
             self.search_cursor = 0;
+            self.show_sections = false;
+            return Ok(SceneAction::Continue);
+        }
+
+        if inp.pressed(6)
+        /* r */
+        {
+            self.manager.refresh();
             return Ok(SceneAction::Continue);
         }
 
         if self.search_mode {
-            // Simplified alpha search input using up/down to cycle letters
-            if up {
-                let c = self.search.chars().last().unwrap_or('a');
+            if inp.pressed(0)
+            /* up */
+            {
+                let c = self.search_text.chars().last().unwrap_or('a');
                 let next = match c {
                     'a'..='y' => ((c as u8) + 1) as char,
                     'z' => ' ',
@@ -204,14 +127,16 @@ impl Scene for StoreScene {
                     _ => 'a',
                 };
                 if self.search_cursor == 0 {
-                    self.search = next.to_string();
+                    self.search_text = next.to_string();
                 } else {
-                    self.search.pop();
-                    self.search.push(next);
+                    self.search_text.pop();
+                    self.search_text.push(next);
                 }
             }
-            if down {
-                let c = self.search.chars().last().unwrap_or('a');
+            if inp.pressed(1)
+            /* down */
+            {
+                let c = self.search_text.chars().last().unwrap_or('a');
                 let prev = match c {
                     'b'..='z' => ((c as u8) - 1) as char,
                     'a' => ' ',
@@ -219,58 +144,72 @@ impl Scene for StoreScene {
                     _ => 'a',
                 };
                 if self.search_cursor == 0 {
-                    self.search = prev.to_string();
+                    self.search_text = prev.to_string();
                 } else {
-                    self.search.pop();
-                    self.search.push(prev);
+                    self.search_text.pop();
+                    self.search_text.push(prev);
                 }
             }
-            if enter && !self.search.is_empty() {
-                self.fetch(0);
+            if inp.pressed(2) && !self.search_text.is_empty() {
+                let q = SearchQuery {
+                    text: self.search_text.clone(),
+                    sort_by: SortField::Relevance,
+                    ..Default::default()
+                };
+                let _results = self.manager.search(&q);
+                self.show_sections = false;
             }
             return Ok(SceneAction::Continue);
         }
 
-        // Normal navigation
-        if r {
-            self.fetch(0);
-            return Ok(SceneAction::Continue);
-        }
-        let max_page = (self.total / 20).max(1).saturating_sub(1);
-        if !self.search_mode && left && self.page > 0 {
-            self.fetch(self.page - 1);
-            return Ok(SceneAction::Continue);
-        }
-        if !self.search_mode && right && self.page < max_page {
-            self.fetch(self.page + 1);
-            return Ok(SceneAction::Continue);
-        }
+        // Section view
+        if self.show_sections {
+            let sections = self.manager.sections();
+            if !sections.is_empty() {
+                if inp.pressed(0) /* up */ && self.section_selection > 0 {
+                    self.section_selection -= 1;
+                }
+                if inp.pressed(1) /* down */ && self.section_selection + 1 < sections.len() {
+                    self.section_selection += 1;
+                }
+                if inp.pressed(2)
+                /* enter */
+                {
+                    self.active_section = self.section_selection;
+                    self.show_sections = false;
+                }
+            }
+        } else {
+            // Game list view
+            let games = self.listings_for_current_view();
+            if inp.pressed(3) /* left */ && self.show_sections {
+                self.show_sections = true;
+            }
 
-        if self.games.is_empty() {
-            return Ok(SceneAction::Continue);
-        }
+            if games.is_empty() {
+                return Ok(SceneAction::Continue);
+            }
 
-        if up && self.selection > 0 {
-            self.selection -= 1;
-        }
-        if down && self.selection + 1 < self.games.len() {
-            self.selection += 1;
-        }
+            if inp.pressed(0) && self.selection > 0 {
+                self.selection -= 1;
+            }
+            if inp.pressed(1) && self.selection + 1 < games.len() {
+                self.selection += 1;
+            }
 
-        if enter {
-            if let Some(game) = self.games.get(self.selection) {
-                let id = game["id"].as_str().unwrap_or("");
-                let name = game["name"].as_str().unwrap_or("unnamed");
-                info!("Store: installing {name} ({id})");
-                match download_package(&self.backend, id) {
-                    Ok(data) => {
-                        if let Err(e) = install_package(&data, name) {
-                            info!("Install failed: {e}");
-                        } else {
-                            info!("Installed: {name}");
+            if inp.pressed(2) {
+                if let Some(game) = games.get(self.selection) {
+                    info!("Store: installing {} ({})", game.name, game.id);
+                    match self.manager.download_package(&game.id) {
+                        Ok(data) => {
+                            if let Err(e) = self.manager.install_package(&data, &game.name) {
+                                info!("Install failed: {e}");
+                            } else {
+                                info!("Installed: {}", game.name);
+                            }
                         }
+                        Err(e) => info!("Download failed: {e}"),
                     }
-                    Err(e) => info!("Download failed: {e}"),
                 }
             }
         }
@@ -281,14 +220,14 @@ impl Scene for StoreScene {
     fn on_render(&mut self, ctx: &mut SceneContext) -> SceneResult {
         self.clear(ctx);
 
-        // Title
+        // Title bar
         self.rect(ctx, 30.0, 0.0, 740.0, 44.0, 0.48, 0.23, 0.93, 1.0);
         if self.search_mode {
             self.text(
                 ctx,
                 42.0,
                 12.0,
-                &format!("Search: {}", self.search),
+                &format!("Search: {}", self.search_text),
                 14.0,
                 1.0,
                 1.0,
@@ -296,92 +235,111 @@ impl Scene for StoreScene {
             );
         } else {
             self.text(ctx, 42.0, 12.0, "Game Store", 14.0, 1.0, 1.0, 1.0);
-            let max_page = (self.total / 20).max(1);
-            self.text(
-                ctx,
-                640.0,
-                14.0,
-                &format!("Page {}/{}", self.page + 1, max_page),
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
         }
 
-        if self.loading {
+        if self.manager.loading() {
             self.text(ctx, 350.0, 290.0, "Loading...", 10.0, 0.5, 0.5, 0.6);
             return Ok(SceneAction::Continue);
         }
 
-        if let Some(ref err) = self.error {
+        if let Some(ref err) = self.manager.error() {
             self.text(ctx, 300.0, 280.0, "Store unavailable", 10.0, 0.9, 0.3, 0.3);
             self.text(ctx, 260.0, 310.0, err, 7.0, 0.5, 0.5, 0.6);
             self.text(ctx, 280.0, 340.0, "Press R to retry", 8.0, 0.5, 0.5, 0.6);
             return Ok(SceneAction::Continue);
         }
 
-        // Instructions
+        // Instruction bar
         self.rect(ctx, 30.0, 48.0, 740.0, 18.0, 0.10, 0.10, 0.22, 0.7);
-        self.text(
-            ctx,
-            42.0,
-            51.0,
-             "Arrows: Browse     Enter: Install     S: Search     R: Refresh     L/R: Page     Esc: Back",
-            7.0,
-            0.5,
-            0.5,
-            0.6,
-        );
-
-        if self.games.is_empty() {
-            self.text(ctx, 320.0, 280.0, "No games found", 10.0, 0.5, 0.5, 0.6);
-            self.text(
-                ctx,
-                280.0,
-                310.0,
-                "Check backend is running",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
+        let instructions = if self.search_mode {
+            "Up/Down: Cycle letters     Enter: Search     Esc: Cancel"
+        } else if self.show_sections {
+            "Up/Down: Browse sections     Enter: View     S: Search     R: Refresh     Esc: Back"
         } else {
-            let mut y = 76.0;
-            for (i, game) in self.games.iter().enumerate() {
-                let card_h = 52.0;
-                let name = game["name"].as_str().unwrap_or("Unknown");
-                let desc = game["description"].as_str().unwrap_or("");
-                let dl = game["downloads"].as_u64().unwrap_or(0);
-                let status = game["status"].as_str().unwrap_or("");
+            "Up/Down: Browse     Enter: Install     S: Search     R: Refresh     Esc: Back"
+        };
+        self.text(ctx, 42.0, 51.0, instructions, 7.0, 0.5, 0.5, 0.6);
 
-                if i == self.selection {
-                    self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
-                    self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
-                } else {
-                    self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
-                }
-
-                self.text(ctx, 46.0, y + 6.0, name, 10.0, 1.0, 1.0, 1.0);
-                self.text(ctx, 46.0, y + 26.0, desc, 7.0, 0.5, 0.5, 0.6);
+        // Section browsing view
+        if self.show_sections {
+            let sections = self.manager.sections();
+            if sections.is_empty() {
+                self.text(ctx, 320.0, 280.0, "No games found", 10.0, 0.5, 0.5, 0.6);
                 self.text(
                     ctx,
-                    680.0,
-                    y + 26.0,
-                    &format!("{} dl", dl),
-                    7.0,
+                    260.0,
+                    310.0,
+                    "Check backend is running",
+                    8.0,
                     0.5,
                     0.5,
                     0.6,
                 );
+            } else {
+                let mut y = 76.0;
+                for (i, section) in sections.iter().enumerate() {
+                    let card_h = 52.0;
+                    if i == self.section_selection {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
+                        self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
+                    } else {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
+                    }
 
-                // Status badge
-                if status == "approved" {
-                    self.rect(ctx, 680.0, y + 4.0, 50.0, 14.0, 0.2, 0.8, 0.4, 0.2);
-                    self.text(ctx, 686.0, y + 5.0, "LIVE", 7.0, 0.2, 0.8, 0.4);
+                    self.text(ctx, 46.0, y + 6.0, &section.title, 10.0, 1.0, 1.0, 1.0);
+                    let preview: String = section
+                        .games
+                        .iter()
+                        .take(3)
+                        .map(|g| g.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.text(ctx, 46.0, y + 26.0, &preview, 7.0, 0.5, 0.5, 0.6);
+                    self.text(
+                        ctx,
+                        680.0,
+                        y + 6.0,
+                        &format!("{} games", section.games.len()),
+                        7.0,
+                        0.5,
+                        0.5,
+                        0.6,
+                    );
+
+                    y += card_h + 4.0;
                 }
+            }
+        } else {
+            // Game list view
+            let games = self.listings_for_current_view();
+            if games.is_empty() {
+                self.text(ctx, 320.0, 280.0, "No games found", 10.0, 0.5, 0.5, 0.6);
+            } else {
+                let mut y = 76.0;
+                for (i, game) in games.iter().enumerate() {
+                    let card_h = 52.0;
+                    if i == self.selection {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
+                        self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
+                    } else {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
+                    }
 
-                y += card_h + 4.0;
+                    self.text(ctx, 46.0, y + 6.0, &game.name, 10.0, 1.0, 1.0, 1.0);
+                    self.text(ctx, 46.0, y + 26.0, &game.description, 7.0, 0.5, 0.5, 0.6);
+
+                    // File size or download count
+                    let info_text = format!("{} dl", game.downloads);
+                    self.text(ctx, 680.0, y + 26.0, &info_text, 7.0, 0.5, 0.5, 0.6);
+
+                    // Status badge
+                    if game.status == "approved" {
+                        self.rect(ctx, 680.0, y + 4.0, 50.0, 14.0, 0.2, 0.8, 0.4, 0.2);
+                        self.text(ctx, 686.0, y + 5.0, "LIVE", 7.0, 0.2, 0.8, 0.4);
+                    }
+
+                    y += card_h + 4.0;
+                }
             }
         }
 
@@ -402,45 +360,20 @@ impl Scene for StoreScene {
     }
 }
 
-/// Install a .vibepkg buffer to the game library.
-pub fn install_package(data: &[u8], name: &str) -> Result<(), String> {
-    use std::io::Write;
-    if data.len() < 4 || data[0] != 0x50 || data[1] != 0x4B || data[2] != 0x03 || data[3] != 0x04 {
-        return Err("Invalid .vibepkg: not a ZIP archive".into());
-    }
-    let install_dir = vibege_config::installed_games_dir().join(name);
-    std::fs::create_dir_all(&install_dir).map_err(|e| format!("Create dir: {e}"))?;
-    let cursor = std::io::Cursor::new(data);
-    match zip::ZipArchive::new(cursor) {
-        Ok(mut archive) => {
-            for i in 0..archive.len() {
-                let mut entry = archive.by_index(i).map_err(|e| format!("ZIP entry: {e}"))?;
-                if entry.is_dir() {
-                    continue;
-                }
-                let target = install_dir.join(entry.name());
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| format!("Dir: {e}"))?;
-                }
-                let mut content = Vec::new();
-                entry
-                    .read_to_end(&mut content)
-                    .map_err(|e| format!("Read: {e}"))?;
-                let mut f = std::fs::File::create(&target).map_err(|e| format!("Create: {e}"))?;
-                f.write_all(&content).map_err(|e| format!("Write: {e}"))?;
-            }
+impl StoreScene {
+    /// Get the games to show in the current view.
+    fn listings_for_current_view(&self) -> Vec<crate::store::models::GameListing> {
+        let sections = self.manager.sections();
+        if self.search_mode {
+            let q = SearchQuery {
+                text: self.search_text.clone(),
+                ..Default::default()
+            };
+            return self.manager.search(&q);
         }
-        Err(e) => return Err(format!("Invalid ZIP: {e}")),
+        if !self.show_sections && !sections.is_empty() && self.active_section < sections.len() {
+            return sections[self.active_section].games.clone();
+        }
+        self.manager.listings()
     }
-    let meta = serde_json::json!({
-        "name": name, "entry": "src/main.lua", "version": "0.1.0",
-        "installed_at": format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
-    });
-    let meta_path = install_dir.join(".vibege-install.json");
-    std::fs::write(
-        &meta_path,
-        serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("Meta: {e}"))?;
-    Ok(())
 }

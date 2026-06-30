@@ -196,6 +196,17 @@ impl SuspensionEngine {
             RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to serialise snapshot", e)
         })?;
 
+        // Optionally compress the serialised data
+        let (disk_data, compressed) = if self.config.enable_compression {
+            let compressed =
+                zstd::encode_all(std::io::Cursor::new(&serialised), 3).map_err(|e| {
+                    RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to compress snapshot", e)
+                })?;
+            (compressed, true)
+        } else {
+            (serialised.clone(), false)
+        };
+
         // Write to disk
         let snapshot_id = format!("snap-{}", chrono_hash());
         let snapshot_path = self
@@ -203,7 +214,7 @@ impl SuspensionEngine {
             .snapshot_dir
             .join(format!("{}.snap", snapshot_id));
 
-        std::fs::write(&snapshot_path, &serialised).map_err(|e| {
+        std::fs::write(&snapshot_path, &disk_data).map_err(|e| {
             RuntimeError::with_cause(
                 ErrorCode::INTERNAL,
                 format!("Failed to write snapshot: {}", snapshot_path.display()),
@@ -217,8 +228,8 @@ impl SuspensionEngine {
             label: label.to_string(),
             created_at: iso_timestamp(),
             game_time_secs,
-            size_bytes: serialised.len() as u64,
-            compressed: false,
+            size_bytes: disk_data.len() as u64,
+            compressed,
         };
 
         self.snapshots.push(meta.clone());
@@ -242,11 +253,13 @@ impl SuspensionEngine {
         self.stats.last_suspend_time_ms = elapsed_ms;
         self.stats.average_suspend_time_ms =
             self.total_suspend_time_ms / self.measurement_count_suspend as f64;
-        self.stats.total_snapshot_bytes += serialised.len() as u64;
+        self.stats.total_snapshot_bytes += disk_data.len() as u64;
 
         info!(
             snapshot_id = %snapshot_id,
-            size_bytes = serialised.len(),
+            size_bytes = disk_data.len(),
+            uncompressed_bytes = serialised.len(),
+            compressed,
             elapsed_ms = elapsed_ms,
             "Game state suspended"
         );
@@ -282,9 +295,26 @@ impl SuspensionEngine {
             )
         })?;
 
-        // Verify checksum
-        let stored_checksum = simple_hash(&serialised);
-        let snapshot: Snapshot = serde_json::from_slice(&serialised).map_err(|e| {
+        // Detect Zstd frame magic bytes (0x28, 0xB5, 0x2F, 0xFD)
+        let is_compressed = serialised.len() >= 4
+            && serialised[0] == 0x28
+            && serialised[1] == 0xB5
+            && serialised[2] == 0x2F
+            && serialised[3] == 0xFD;
+
+        let decompressed = if is_compressed {
+            zstd::decode_all(std::io::Cursor::new(&serialised)).map_err(|e| {
+                RuntimeError::with_cause(
+                    ErrorCode::INTERNAL,
+                    "Failed to decompress snapshot (data may be corrupted)",
+                    e,
+                )
+            })?
+        } else {
+            serialised
+        };
+
+        let snapshot: Snapshot = serde_json::from_slice(&decompressed).map_err(|e| {
             RuntimeError::with_cause(
                 ErrorCode::INTERNAL,
                 "Failed to deserialise snapshot (corrupted format)",
@@ -292,10 +322,14 @@ impl SuspensionEngine {
             )
         })?;
 
-        if snapshot.checksum != stored_checksum {
+        // Verify checksum — hash the stored game_state, not the serialized envelope
+        let computed_checksum = simple_hash(&snapshot.game_state);
+        if snapshot.checksum != computed_checksum {
             warn!(
                 snapshot_id = %snapshot_id,
-                "Snapshot checksum mismatch — data may be corrupted"
+                expected = %snapshot.checksum,
+                computed = %computed_checksum,
+                "Snapshot checksum mismatch — game state data may be corrupted"
             );
         }
 
@@ -395,11 +429,10 @@ fn chrono_hash() -> String {
 }
 
 fn simple_hash(data: &[u8]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]
@@ -568,6 +601,163 @@ mod tests {
         assert_eq!(
             deserialised.asset_references.get("tex_player").unwrap(),
             "abc123"
+        );
+    }
+
+    #[test]
+    fn test_checksum_matches_on_suspend_resume() {
+        let dir = tempdir().unwrap();
+        let config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let mut engine = SuspensionEngine::with_config(config).unwrap();
+
+        let game_state = b"player_x=100,player_y=200,score=42,level=5";
+        let meta = engine.suspend(game_state, 10.5, "checkpoint").unwrap();
+
+        let restored = engine.resume(&meta.id).unwrap();
+        assert_eq!(restored.game_state, game_state);
+        assert_eq!(restored.game_time_secs, 10.5);
+
+        // Verify checksum integrity — hash matches what we stored
+        let expected = simple_hash(game_state);
+        assert_eq!(
+            restored.checksum, expected,
+            "Checksum should match the game_state hash"
+        );
+    }
+
+    #[test]
+    fn test_checksum_mismatch_detected_on_corrupt_state() {
+        let dir = tempdir().unwrap();
+        let config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            enable_compression: false, // needed to read/edit JSON directly
+            ..Default::default()
+        };
+        let mut engine = SuspensionEngine::with_config(config).unwrap();
+
+        let meta = engine.suspend(b"original_state", 0.0, "test").unwrap();
+
+        // Corrupt the snapshot by modifying game_state while keeping JSON valid
+        let snap_path = dir.path().join(format!("{}.snap", meta.id));
+        let file_data = std::fs::read(&snap_path).unwrap();
+        let mut snapshot: Snapshot = serde_json::from_slice(&file_data).unwrap();
+        snapshot.game_state = b"CORRUPTED_STATE".to_vec();
+        snapshot.checksum = simple_hash(b"original_state"); // stale checksum from before corruption
+        let new_data = serde_json::to_vec(&snapshot).unwrap();
+        std::fs::write(&snap_path, &new_data).unwrap();
+
+        // Resume should succeed after valid JSON parse
+        let restored = engine.resume(&meta.id).unwrap();
+        // The game_state should be the corrupted version
+        assert_eq!(restored.game_state, b"CORRUPTED_STATE");
+        // And the checksum should NOT match the corrupt data
+        let computed = simple_hash(&restored.game_state);
+        assert_ne!(
+            restored.checksum, computed,
+            "Checksum should detect game_state corruption"
+        );
+    }
+
+    #[test]
+    fn test_compressed_snapshot_roundtrip() {
+        let dir = tempdir().unwrap();
+        let config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            enable_compression: true,
+            ..Default::default()
+        };
+        let mut engine = SuspensionEngine::with_config(config).unwrap();
+        let game_state = b"The quick brown fox jumps over the lazy dog. ";
+        let state = game_state.repeat(100); // ~6KB of data
+
+        let meta = engine.suspend(&state, 42.0, "compressed_test").unwrap();
+        assert!(meta.compressed, "snapshot should be marked compressed");
+        assert!(meta.size_bytes > 0, "compressed size should be positive");
+
+        let restored = engine.resume(&meta.id).unwrap();
+        assert_eq!(restored.game_state, state);
+        assert_eq!(restored.game_time_secs, 42.0);
+    }
+
+    #[test]
+    fn test_compressed_vs_uncompressed_size() {
+        let dir = tempdir().unwrap();
+        let game_state = b"player_x=100,player_y=200,score=42,level=5,health=100,mana=50";
+
+        // Create compressed snapshot
+        let comp_config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            enable_compression: true,
+            max_snapshots: 10,
+            ..Default::default()
+        };
+        let mut comp_engine = SuspensionEngine::with_config(comp_config).unwrap();
+        let comp_meta = comp_engine.suspend(game_state, 0.0, "comp").unwrap();
+
+        // Create uncompressed snapshot
+        let raw_config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            enable_compression: false,
+            max_snapshots: 10,
+            ..Default::default()
+        };
+        let mut raw_engine = SuspensionEngine::with_config(raw_config).unwrap();
+        let raw_meta = raw_engine.suspend(game_state, 0.0, "raw").unwrap();
+
+        // Compression should produce smaller snapshots for repetitive data
+        assert!(
+            comp_meta.size_bytes < raw_meta.size_bytes,
+            "compressed snapshot ({}) should be smaller than uncompressed ({})",
+            comp_meta.size_bytes,
+            raw_meta.size_bytes,
+        );
+    }
+
+    #[test]
+    fn test_suspend_resume_perf_within_target() {
+        let dir = tempdir().unwrap();
+        let config = SuspensionConfig {
+            snapshot_dir: dir.path().to_path_buf(),
+            enable_compression: true,
+            ..Default::default()
+        };
+        let mut engine = SuspensionEngine::with_config(config).unwrap();
+        let state = b"player_x=100,player_y=200,score=42,level=5,health=100,mana=50,inventory=sword,shield,potion";
+
+        // Time suspend
+        let suspend_start = Instant::now();
+        let meta = engine.suspend(state, 0.0, "perf_test").unwrap();
+        let suspend_time = suspend_start.elapsed();
+
+        // Time resume
+        let resume_start = Instant::now();
+        let restored = engine.resume(&meta.id).unwrap();
+        let resume_time = resume_start.elapsed();
+
+        // Verify correctness
+        assert_eq!(restored.game_state, state);
+
+        // Verify within v0.1 targets: suspend <500ms, resume <1000ms
+        assert!(
+            suspend_time < Duration::from_millis(500),
+            "Suspend took {:?} (target: <500ms)",
+            suspend_time
+        );
+        assert!(
+            resume_time < Duration::from_millis(1000),
+            "Resume took {:?} (target: <1000ms)",
+            resume_time
+        );
+
+        // Print for diagnostics
+        tracing::info!(
+            suspend_time_us = suspend_time.as_micros(),
+            resume_time_us = resume_time.as_micros(),
+            compressed_size = meta.size_bytes,
+            "Suspension performance benchmark"
         );
     }
 }

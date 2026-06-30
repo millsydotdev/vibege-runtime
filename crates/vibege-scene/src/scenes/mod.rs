@@ -1,4 +1,5 @@
 pub mod boot_scene;
+pub mod error_scene;
 pub mod first_run_scene;
 pub mod game_manager;
 pub mod game_scene;

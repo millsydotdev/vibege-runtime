@@ -6,9 +6,11 @@ license.workspace = true
 description = "VibeGE SDK — the official public API for game development. Defines the Lua bindings that the runtime exposes to games."
 
 [dependencies]
+vibege-core = { path = "../vibege-core" }
 vibege-renderer = { path = "../vibege-renderer" }
 vibege-input = { path = "../vibege-input" }
 vibege-audio = { path = "../vibege-audio" }
+vibege-asset = { path = "../vibege-asset" }
 mlua = { version = "0.10", features = ["luau"] }
 serde_json = "1"
 tracing = "0.1"

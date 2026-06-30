@@ -1,134 +1,44 @@
+use std::sync::Arc;
+
+use crate::input_helper::InputState;
+use crate::library::manager::LibraryManager;
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
-use std::io::Read;
 use tracing::info;
 
-fn scan_games() -> Vec<serde_json::Value> {
-    let mut games = Vec::new();
-    let dir = vibege_config::installed_games_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let meta_path = path.join(".vibege-install.json");
-            if !meta_path.exists() {
-                continue;
-            }
-            if let Ok(content) = std::fs::read_to_string(&meta_path) {
-                if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(obj) = meta.as_object_mut() {
-                        obj.insert(
-                            "_path".into(),
-                            serde_json::Value::String(path.to_string_lossy().to_string()),
-                        );
-                        let size: u64 = path
-                            .read_dir()
-                            .ok()
-                            .map(|e| {
-                                e.flatten()
-                                    .filter_map(|f| f.metadata().ok())
-                                    .map(|m| m.len())
-                                    .sum()
-                            })
-                            .unwrap_or(0);
-                        obj.insert(
-                            "_size".into(),
-                            serde_json::Value::Number(serde_json::Number::from(size)),
-                        );
-                    }
-                    games.push(meta);
-                }
-            }
-        }
-    }
-    games.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["name"].as_str().unwrap_or(""))
-    });
-    games
-}
-
-fn size_str(size: u64) -> String {
-    if size < 1024 {
-        format!("{} B", size)
-    } else if size < 1024 * 1024 {
-        format!("{:.1} KB", size as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-    }
-}
-
 pub struct LibraryScene {
+    manager: Arc<LibraryManager>,
     selection: usize,
-    games: Vec<serde_json::Value>,
-    favourites: std::collections::HashSet<String>,
-    updates: std::collections::HashMap<String, String>, // game name -> latest version
+    view_mode: ViewMode,
+    game_names: Vec<String>,
 }
 
-fn check_for_updates(
-    games: &[serde_json::Value],
-    backend: &str,
-) -> std::collections::HashMap<String, String> {
-    let mut updates = std::collections::HashMap::new();
-    for game in games {
-        let name = game["name"].as_str().unwrap_or("");
-        if name.is_empty() {
-            continue;
-        }
-        let installed_ver = game["version"].as_str().unwrap_or("0.0.0");
-        // Fetch latest from registry
-        let url = format!("{backend}/registry/{}", urlencoding(name));
-        if let Ok(resp) = ureq::get(&url).call() {
-            let mut body = String::new();
-            if resp
-                .into_body()
-                .into_reader()
-                .read_to_string(&mut body)
-                .is_ok()
-            {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                    let latest = json["package"]["updatedAt"].as_str().unwrap_or("");
-                    if !latest.is_empty() && latest != installed_ver {
-                        updates.insert(name.to_string(), latest.to_string());
-                    }
-                }
-            }
-        }
-    }
-    updates
-}
-
-fn urlencoding(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c.to_string(),
-            ' ' => "+".into(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+enum ViewMode {
+    List,
+    Collections,
+    CollectionView(usize),
 }
 
 impl LibraryScene {
-    pub fn new() -> Self {
+    pub fn new(backend: String) -> Self {
+        let manager = Arc::new(LibraryManager::new(backend));
+        manager.initialize();
+        let game_names = manager
+            .games()
+            .into_iter()
+            .map(|g| g.name.clone())
+            .collect();
         Self {
+            manager,
             selection: 0,
-            games: scan_games(),
-            favourites: std::collections::HashSet::new(),
-            updates: std::collections::HashMap::new(),
+            view_mode: ViewMode::List,
+            game_names,
         }
-    }
-
-    pub fn with_updates(mut self, backend: &str) -> Self {
-        self.updates = check_for_updates(&self.games, backend);
-        self
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
         ctx.renderer.set_clear(0.05, 0.05, 0.15, 1.0);
     }
+
     fn rect(
         &self,
         ctx: &mut SceneContext,
@@ -143,6 +53,7 @@ impl LibraryScene {
     ) {
         ctx.renderer.draw_rect(x, y, w, h, r, g, b, a);
     }
+
     fn text(
         &self,
         ctx: &mut SceneContext,
@@ -156,6 +67,25 @@ impl LibraryScene {
     ) {
         ctx.renderer.draw_text(x, y, s, sz, r, g, b);
     }
+
+    fn current_games(&self) -> Vec<crate::library::models::InstalledGame> {
+        match &self.view_mode {
+            ViewMode::List => self.manager.games(),
+            ViewMode::Collections => Vec::new(),
+            ViewMode::CollectionView(idx) => {
+                let collections = self.manager.collections.all();
+                collections
+                    .get(*idx)
+                    .map(|c| {
+                        c.game_names
+                            .iter()
+                            .filter_map(|name| self.manager.registry.get(name))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+        }
+    }
 }
 
 impl Scene for LibraryScene {
@@ -164,125 +94,139 @@ impl Scene for LibraryScene {
     }
 
     fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
-        info!("LibraryScene: {} games found", self.games.len());
+        info!(
+            "LibraryScene: {} games found",
+            self.manager.registry.count()
+        );
         Ok(SceneAction::Continue)
     }
 
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
-        let up = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("up"));
-        let down = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("down"));
-        let enter = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("enter"));
-        let esc = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("escape"));
-        let del = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("delete"));
-        let r = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("r"));
-        let f = ctx
-            .input
-            .lock()
-            .expect("lock")
-            .is_key_pressed(vibege_input::key_name_to_code("f"));
+        let inp = InputState::new(
+            &ctx.input,
+            &[
+                "up", "down", "enter", "escape", "r", "f", "delete", "c", "u",
+            ],
+        );
 
-        if esc {
-            return Ok(SceneAction::Pop);
+        if inp.pressed(4)
+        /* esc */
+        {
+            match &self.view_mode {
+                ViewMode::CollectionView(_) => {
+                    self.view_mode = ViewMode::Collections;
+                    self.selection = 0;
+                }
+                ViewMode::Collections => {
+                    self.view_mode = ViewMode::List;
+                    self.selection = 0;
+                }
+                ViewMode::List => {
+                    return Ok(SceneAction::Pop);
+                }
+            }
+            return Ok(SceneAction::Continue);
         }
-        if r {
-            self.games = scan_games();
+
+        if inp.pressed(5)
+        /* r */
+        {
+            self.manager.refresh();
+            self.game_names = self
+                .manager
+                .games()
+                .into_iter()
+                .map(|g| g.name.clone())
+                .collect();
             self.selection = 0;
             return Ok(SceneAction::Continue);
         }
 
-        if self.games.is_empty() {
+        if inp.pressed(9) /* c */ && matches!(self.view_mode, ViewMode::List) {
+            self.view_mode = ViewMode::Collections;
+            self.selection = 0;
             return Ok(SceneAction::Continue);
         }
 
-        if up && self.selection > 0 {
-            self.selection -= 1;
-        }
-        if down && self.selection + 1 < self.games.len() {
-            self.selection += 1;
+        if inp.pressed(8) /* u */ && matches!(self.view_mode, ViewMode::List) {
+            self.manager.refresh_updates();
+            return Ok(SceneAction::Continue);
         }
 
-        if f {
-            if let Some(game) = self.games.get(self.selection) {
-                let name = game["name"].as_str().unwrap_or("").to_string();
-                if !self.favourites.insert(name.clone()) {
-                    self.favourites.remove(&name);
+        match &self.view_mode {
+            ViewMode::Collections => {
+                let collections = self.manager.collections.all();
+                if inp.pressed(0) && self.selection > 0 {
+                    self.selection -= 1;
+                }
+                if inp.pressed(1) && self.selection + 1 < collections.len() {
+                    self.selection += 1;
+                }
+                if inp.pressed(2) {
+                    self.view_mode = ViewMode::CollectionView(self.selection);
+                    self.selection = 0;
                 }
             }
-        }
-
-        if del {
-            if let Some(game) = self.games.get(self.selection) {
-                let name = game["name"].as_str().unwrap_or("").to_string();
-                if let Some(path) = game["_path"].as_str() {
-                    std::fs::remove_dir_all(path).ok();
-                    info!("Uninstalled: {name}");
+            _ => {
+                let games = self.current_games();
+                if games.is_empty() {
+                    return Ok(SceneAction::Continue);
                 }
-            }
-            self.games = scan_games();
-            self.selection = 0;
-        }
 
-        if enter {
-            if let Some(game) = self.games.get(self.selection) {
-                let entry = game["entry"].as_str().unwrap_or("src/main.lua");
-                let base = game["_path"].as_str().unwrap_or("");
-                let full_path = std::path::Path::new(base).join(entry);
-                if full_path.exists() {
-                    if let Ok(source) = std::fs::read_to_string(&full_path) {
-                        // Update last played
-                        if let Ok(content) = std::fs::read_to_string(
-                            std::path::Path::new(base).join(".vibege-install.json"),
-                        ) {
-                            if let Ok(mut meta) =
-                                serde_json::from_str::<serde_json::Value>(&content)
-                            {
-                                let now = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs();
-                                if let Some(obj) = meta.as_object_mut() {
-                                    obj.insert(
-                                        "last_played".into(),
-                                        serde_json::Value::Number(serde_json::Number::from(now)),
-                                    );
-                                }
-                                let _ = std::fs::write(
-                                    std::path::Path::new(base).join(".vibege-install.json"),
-                                    serde_json::to_string_pretty(&meta).unwrap_or_default(),
-                                );
+                if inp.pressed(0) && self.selection > 0 {
+                    self.selection -= 1;
+                }
+                if inp.pressed(1) && self.selection + 1 < games.len() {
+                    self.selection += 1;
+                }
+
+                if inp.pressed(6)
+                /* f */
+                {
+                    if let Some(game) = games.get(self.selection) {
+                        let now_fav = self.manager.toggle_favorite(&game.name);
+                        info!(
+                            "{} is now {}",
+                            game.name,
+                            if now_fav { "favorite" } else { "unfavorited" }
+                        );
+                    }
+                }
+
+                if inp.pressed(7)
+                /* del */
+                {
+                    if let Some(game) = games.get(self.selection) {
+                        if let Err(e) = self.manager.uninstall(&game.name) {
+                            info!("Uninstall failed: {e}");
+                        } else {
+                            info!("Uninstalled: {}", game.name);
+                            self.game_names = self
+                                .manager
+                                .games()
+                                .into_iter()
+                                .map(|g| g.name.clone())
+                                .collect();
+                            self.selection = 0;
+                        }
+                    }
+                }
+
+                if inp.pressed(2) {
+                    if let Some(game) = games.get(self.selection) {
+                        let entry = &game.entry_point;
+                        let base = &game.path;
+                        let full_path = base.join(entry);
+                        if full_path.exists() {
+                            if let Ok(source) = std::fs::read_to_string(&full_path) {
+                                self.manager.launch(&game.name);
+                                let gs = Box::new(super::game_scene::GameScene::new(
+                                    source,
+                                    game.name.clone(),
+                                ));
+                                return Ok(SceneAction::Push(gs));
                             }
                         }
-                        let gs = Box::new(super::game_scene::GameScene::new(
-                            source,
-                            ctx.renderer.clone(),
-                            ctx.input.clone(),
-                            None,
-                        ));
-                        return Ok(SceneAction::Push(gs));
                     }
                 }
             }
@@ -294,86 +238,145 @@ impl Scene for LibraryScene {
     fn on_render(&mut self, ctx: &mut SceneContext) -> SceneResult {
         self.clear(ctx);
 
-        // Title
+        // Title bar
         self.rect(ctx, 30.0, 0.0, 740.0, 44.0, 0.48, 0.23, 0.93, 1.0);
-        self.text(ctx, 42.0, 12.0, "Game Library", 14.0, 1.0, 1.0, 1.0);
-        self.text(
-            ctx,
-            620.0,
-            14.0,
-            &format!("{} installed", self.games.len()),
-            8.0,
-            0.5,
-            0.5,
-            0.6,
-        );
 
-        // Instructions
-        self.rect(ctx, 30.0, 48.0, 740.0, 18.0, 0.10, 0.10, 0.22, 0.7);
-        self.text(ctx, 42.0, 51.0, "Arrows: Navigate     Enter: Launch     F: Favourite     R: Refresh     Del: Uninstall     Esc: Back", 7.0, 0.5, 0.5, 0.6);
+        match &self.view_mode {
+            ViewMode::Collections => {
+                self.text(ctx, 42.0, 12.0, "Collections", 14.0, 1.0, 1.0, 1.0);
 
-        if self.games.is_empty() {
-            self.text(ctx, 300.0, 280.0, "No games installed", 12.0, 0.5, 0.5, 0.6);
-            self.text(
-                ctx,
-                260.0,
-                310.0,
-                "Use 'vibege install <file>.vibepkg' to install games",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-        } else {
-            let mut y = 76.0;
-            for (i, game) in self.games.iter().enumerate() {
-                let card_h = 52.0;
-                if i == self.selection {
-                    self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
-                    self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
-                } else {
-                    self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
-                }
-
-                let name = game["name"].as_str().unwrap_or("Unknown");
-                let version = game["version"].as_str().unwrap_or("0.1.0");
-                let author = game["author"].as_str().unwrap_or("Unknown");
-                let entry = game["entry"].as_str().unwrap_or("src/main.lua");
-                let size_val = game["_size"].as_u64().unwrap_or(0);
-                let is_fav = self.favourites.contains(name);
-                let has_update = self.updates.contains_key(name);
-
-                let fav = if is_fav { "★ " } else { "  " };
+                self.rect(ctx, 30.0, 48.0, 740.0, 18.0, 0.10, 0.10, 0.22, 0.7);
                 self.text(
                     ctx,
-                    46.0,
-                    y + 6.0,
-                    &format!("{}{}", fav, name),
-                    10.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                );
-                if has_update {
-                    self.rect(ctx, 680.0, y + 4.0, 56.0, 14.0, 0.9, 0.7, 0.2, 0.2);
-                    self.text(ctx, 686.0, y + 5.0, "UPDATE", 7.0, 0.9, 0.7, 0.2);
-                }
-                self.text(
-                    ctx,
-                    46.0,
-                    y + 26.0,
-                    &format!("v{} by {}  |  {}", version, author, size_str(size_val)),
+                    42.0,
+                    51.0,
+                    "Up/Down: Browse     Enter: View     Esc: Back",
                     7.0,
                     0.5,
                     0.5,
                     0.6,
                 );
-                self.text(ctx, 600.0, y + 26.0, entry, 7.0, 0.5, 0.5, 0.6);
 
-                y += card_h + 4.0;
+                let collections = self.manager.collections.all();
+                let mut y = 76.0;
+                for (i, collection) in collections.iter().enumerate() {
+                    let card_h = 52.0;
+                    if i == self.selection {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
+                        self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
+                    } else {
+                        self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
+                    }
+                    self.text(ctx, 46.0, y + 6.0, &collection.name, 10.0, 1.0, 1.0, 1.0);
+                    self.text(
+                        ctx,
+                        46.0,
+                        y + 26.0,
+                        &format!("{} games", collection.game_names.len()),
+                        7.0,
+                        0.5,
+                        0.5,
+                        0.6,
+                    );
+                    y += card_h + 4.0;
+                }
+            }
+            _ => {
+                let count = self.manager.registry.count();
+                let update_count = self.manager.available_updates().len();
+                let title = if update_count > 0 {
+                    format!(
+                        "Game Library  |  {} installed  |  {} updates",
+                        count, update_count
+                    )
+                } else {
+                    format!("Game Library  |  {} installed", count)
+                };
+                self.text(ctx, 42.0, 12.0, &title, 14.0, 1.0, 1.0, 1.0);
+
+                self.rect(ctx, 30.0, 48.0, 740.0, 18.0, 0.10, 0.10, 0.22, 0.7);
+                self.text(ctx, 42.0, 51.0,
+                    "Up/Down: Browse     Enter: Launch     F: Favourite     C: Collections     U: Check Updates     R: Refresh     Del: Uninstall     Esc: Back",
+                    7.0, 0.5, 0.5, 0.6,
+                );
+
+                let games = self.current_games();
+                if games.is_empty() {
+                    self.text(ctx, 300.0, 280.0, "No games found", 12.0, 0.5, 0.5, 0.6);
+                    if matches!(self.view_mode, ViewMode::List) {
+                        self.text(
+                            ctx,
+                            260.0,
+                            310.0,
+                            "Use 'vibege install <file>.vibepkg' to install games",
+                            8.0,
+                            0.5,
+                            0.5,
+                            0.6,
+                        );
+                    }
+                } else {
+                    let mut y = 76.0;
+                    for (i, game) in games.iter().enumerate() {
+                        let card_h = 52.0;
+                        if i == self.selection {
+                            self.rect(ctx, 30.0, y, 740.0, card_h, 0.25, 0.15, 0.45, 1.0);
+                            self.rect(ctx, 30.0, y, 3.0, card_h, 0.48, 0.23, 0.93, 1.0);
+                        } else {
+                            self.rect(ctx, 30.0, y, 740.0, card_h, 0.10, 0.10, 0.22, 1.0);
+                        }
+
+                        let is_fav = self.manager.collections.is_favorite(&game.name);
+                        let has_update = self.manager.has_update(&game.name);
+                        let fav = if is_fav { "★ " } else { "  " };
+
+                        self.text(
+                            ctx,
+                            46.0,
+                            y + 6.0,
+                            &format!("{}{}", fav, game.name),
+                            10.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                        );
+
+                        if has_update {
+                            self.rect(ctx, 680.0, y + 4.0, 56.0, 14.0, 0.9, 0.7, 0.2, 0.2);
+                            self.text(ctx, 686.0, y + 5.0, "UPDATE", 7.0, 0.9, 0.7, 0.2);
+                        }
+
+                        let size_str = format_file_size(game.size_bytes);
+                        let details = format!(
+                            "v{} by {}  |  {}  |  {} plays",
+                            game.version, game.author, size_str, game.play_count
+                        );
+                        self.text(ctx, 46.0, y + 26.0, &details, 7.0, 0.5, 0.5, 0.6);
+                        self.text(ctx, 600.0, y + 26.0, &game.entry_point, 7.0, 0.5, 0.5, 0.6);
+
+                        y += card_h + 4.0;
+                    }
+                }
             }
         }
 
+        // Bottom bar
+        self.rect(ctx, 30.0, 560.0, 740.0, 22.0, 0.10, 0.10, 0.22, 0.6);
+        self.text(ctx, 42.0, 563.0,
+            "Esc: Back     Enter: Launch     F: Fav     C: Collections     U: Updates     R: Refresh",
+            7.0, 0.5, 0.5, 0.6,
+        );
+
         Ok(SceneAction::Continue)
+    }
+}
+
+fn format_file_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }

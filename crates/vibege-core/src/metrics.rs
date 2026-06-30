@@ -55,13 +55,13 @@ impl MetricsRegistry {
 
     /// Increments a named counter by 1.
     pub fn increment_counter(&self, name: &str) {
-        let mut counters = self.counters.write().unwrap();
+        let mut counters = self.counters.write().expect("counters lock");
         *counters.entry(name.to_string()).or_insert(0) += 1;
     }
 
     /// Sets a named gauge to a value.
     pub fn set_gauge(&self, name: &str, value: f64) {
-        let mut gauges = self.gauges.write().unwrap();
+        let mut gauges = self.gauges.write().expect("gauges lock");
         gauges.insert(name.to_string(), value);
     }
 
@@ -84,8 +84,8 @@ impl MetricsRegistry {
     /// Takes an atomic snapshot of all metrics.
     pub fn snapshot(&self) -> MetricsSnapshot {
         let uptime = self.started_at.elapsed();
-        let counters = self.counters.read().unwrap().clone();
-        let gauges = self.gauges.read().unwrap().clone();
+        let counters = self.counters.read().expect("counters lock").clone();
+        let gauges = self.gauges.read().expect("gauges lock").clone();
         let frame_count = self.frame_count.load(Ordering::Relaxed);
         let last_frame_ms = self.last_frame_time_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0;
 

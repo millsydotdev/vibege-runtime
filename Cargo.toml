@@ -13,6 +13,7 @@ members = [
     "crates/vibege-config",
     "crates/vibege-sdk",
     "crates/vibege-scene",
+    "crates/vibege-asset",
     "crates/vibege-runtime-app",
 ]
 

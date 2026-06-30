@@ -15,9 +15,9 @@
 //! - `vibege.audio.play_score()` — play score sound
 //! - `vibege.audio.play_bounce()` — play bounce sound
 
+use mlua::{Lua, Table};
 use std::sync::Arc;
 use std::sync::Mutex;
-use mlua::{Lua, Table};
 use vibege_audio::AudioSystem;
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
@@ -44,7 +44,9 @@ pub fn register_game_api(
                 .is_key_down(vibege_input::key_name_to_code(&key)))
         })
         .map_err(|e| e.to_string())?;
-    input_table.set("is_key_down", is_down).map_err(|e| e.to_string())?;
+    input_table
+        .set("is_key_down", is_down)
+        .map_err(|e| e.to_string())?;
 
     let inp = Arc::clone(input);
     let is_pr = lua
@@ -59,7 +61,9 @@ pub fn register_game_api(
         .set("is_key_pressed", is_pr)
         .map_err(|e| e.to_string())?;
 
-    vibege.set("input", input_table).map_err(|e| e.to_string())?;
+    vibege
+        .set("input", input_table)
+        .map_err(|e| e.to_string())?;
 
     // ── Render API ──
     let render_table = lua.create_table().map_err(|e| e.to_string())?;
@@ -73,7 +77,9 @@ pub fn register_game_api(
             },
         )
         .map_err(|e| e.to_string())?;
-    render_table.set("draw_rect", dr).map_err(|e| e.to_string())?;
+    render_table
+        .set("draw_rect", dr)
+        .map_err(|e| e.to_string())?;
 
     let ren = Arc::clone(renderer);
     let clr = lua
@@ -97,7 +103,9 @@ pub fn register_game_api(
         .set("draw_text", dt)
         .map_err(|e| e.to_string())?;
 
-    vibege.set("render", render_table).map_err(|e| e.to_string())?;
+    vibege
+        .set("render", render_table)
+        .map_err(|e| e.to_string())?;
 
     // ── Audio API ──
     if let Some(sys) = audio {
@@ -145,10 +153,10 @@ pub fn register_game_api(
             )
             .map_err(|e| e.to_string())?;
 
-        vibege.set("audio", audio_table).map_err(|e| e.to_string())?;
+        vibege
+            .set("audio", audio_table)
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(vibege)
 }
-
-

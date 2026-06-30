@@ -89,6 +89,7 @@ fn main() -> anyhow::Result<()> {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
                 HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
             };
+            #[allow(clippy::collapsible_if)]
             if let Ok(handle) = window.window_handle() {
                 if let RawWindowHandle::Win32(w32) = handle.as_ref() {
                     let hwnd = w32.hwnd.get() as HWND;

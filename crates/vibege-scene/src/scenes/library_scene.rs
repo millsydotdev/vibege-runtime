@@ -46,7 +46,7 @@ fn scan_games() -> Vec<serde_json::Value> {
         a["name"]
             .as_str()
             .unwrap_or("")
-            .cmp(&b["name"].as_str().unwrap_or(""))
+            .cmp(b["name"].as_str().unwrap_or(""))
     });
     games
 }

@@ -923,19 +923,42 @@ mod tests {
     fn test_draw_list_queue_and_drain() {
         let list = Mutex::new(Vec::new());
         list.lock().unwrap().push(DrawCmd::Rect {
-            x: 10.0, y: 20.0, w: 100.0, h: 50.0,
-            r: 1.0, g: 0.0, b: 0.0, a: 1.0,
+            x: 10.0,
+            y: 20.0,
+            w: 100.0,
+            h: 50.0,
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
         });
-        list.lock().unwrap().push(DrawCmd::Sprite { tex_idx: 0, x: 0.0, y: 0.0, w: 32.0, h: 32.0 });
+        list.lock().unwrap().push(DrawCmd::Sprite {
+            tex_idx: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 32.0,
+            h: 32.0,
+        });
         list.lock().unwrap().push(DrawCmd::Glyph {
-            x: 50.0, y: 50.0, w: 8.0, h: 8.0,
-            u1: 0.0, v1: 0.0, u2: 0.0625, v2: 0.1667,
-            r: 1.0, g: 1.0, b: 1.0,
+            x: 50.0,
+            y: 50.0,
+            w: 8.0,
+            h: 8.0,
+            u1: 0.0,
+            v1: 0.0,
+            u2: 0.0625,
+            v2: 0.1667,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
         });
         let cmds = list.lock().unwrap().drain(..).collect::<Vec<_>>();
         assert_eq!(cmds.len(), 3);
         match &cmds[0] {
-            DrawCmd::Rect { x, y, .. } => { assert_eq!(*x, 10.0); assert_eq!(*y, 20.0); }
+            DrawCmd::Rect { x, y, .. } => {
+                assert_eq!(*x, 10.0);
+                assert_eq!(*y, 20.0);
+            }
             _ => panic!("Expected Rect"),
         }
     }

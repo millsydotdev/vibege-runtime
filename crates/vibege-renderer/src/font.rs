@@ -166,7 +166,11 @@ mod tests {
         let rgba = font_atlas_rgba();
         // Space (char 32, index 0, position 0,0) should be all transparent
         let first_pixel = &rgba[0..4];
-        assert_eq!(first_pixel, &[0, 0, 0, 0], "Space glyph should be transparent");
+        assert_eq!(
+            first_pixel,
+            &[0, 0, 0, 0],
+            "Space glyph should be transparent"
+        );
         // 'A' (char 65, index 33, col 1, row 2) should have some opaque pixels
         // Pixel at atlas position (8, 16) = row 2 * 128 + col 1 * 8 = byte index (2*128+1*8)*4
         let a_pixel = &rgba[(2 * 128 + 8) * 4..(2 * 128 + 8) * 4 + 4];
@@ -177,7 +181,11 @@ mod tests {
         // Bits: 0x18 = 00011000, so columns 2 and 3 (0-indexed) are set
         // Atlas pixel (8 + 2, 16 + 0) = (10, 16), but we're reading (8, 16) which is column 0 row 0 of 'A'
         // Column 0 of 0x18 = bit 7 = 0 = transparent
-        assert_eq!(a_pixel, &[0, 0, 0, 0], "First column of 'A' should be transparent");
+        assert_eq!(
+            a_pixel,
+            &[0, 0, 0, 0],
+            "First column of 'A' should be transparent"
+        );
     }
 
     #[test]

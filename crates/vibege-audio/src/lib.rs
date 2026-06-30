@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use rodio::{OutputStream, OutputStreamHandle, Sink};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Audio system for playing sound effects and music.
 ///

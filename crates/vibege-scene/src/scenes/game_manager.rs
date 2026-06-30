@@ -29,14 +29,14 @@ impl GameSession {
         {
             let inp = Arc::clone(input);
             let is_down = lua.create_function(move |_, key: String| {
-                Ok(inp.lock().unwrap().is_key_down(crate::key_name_to_code(&key)))
+                Ok(inp.lock().unwrap().is_key_down(vibege_input::key_name_to_code(&key)))
             }).map_err(|e| e.to_string())?;
             input_table.set("is_key_down", is_down).map_err(|e| e.to_string())?;
         }
         {
             let inp = Arc::clone(input);
             let is_pr = lua.create_function(move |_, key: String| {
-                Ok(inp.lock().unwrap().is_key_pressed(crate::key_name_to_code(&key)))
+                Ok(inp.lock().unwrap().is_key_pressed(vibege_input::key_name_to_code(&key)))
             }).map_err(|e| e.to_string())?;
             input_table.set("is_key_pressed", is_pr).map_err(|e| e.to_string())?;
         }

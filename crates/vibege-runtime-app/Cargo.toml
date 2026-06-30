@@ -17,6 +17,8 @@ vibege-renderer = { path = "../vibege-renderer" }
 vibege-audio = { path = "../vibege-audio" }
 vibege-suspension = { path = "../vibege-suspension" }
 vibege-tray = { path = "../vibege-tray" }
+vibege-config = { path = "../vibege-config" }
+vibege-scene = { path = "../vibege-scene" }
 winit = "0.30"
 mlua = { version = "0.10", features = ["luau"] }
 pollster = "0.4"
@@ -25,7 +27,4 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 raw-window-handle = "0.6"
-dirs = "5"
 serde_json = "1"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"

@@ -1,0 +1,11 @@
+[package]
+name = "vibege-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VibeGE Configuration Manager — player settings persisted to ~/.vibege/config.toml"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"

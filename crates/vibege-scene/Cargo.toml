@@ -1,0 +1,18 @@
+[package]
+name = "vibege-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VibeGE Scene Manager — stack-based platform navigation, game lifecycle"
+
+[dependencies]
+vibege-core = { path = "../vibege-core" }
+vibege-renderer = { path = "../vibege-renderer" }
+vibege-input = { path = "../vibege-input" }
+vibege-audio = { path = "../vibege-audio" }
+vibege-config = { path = "../vibege-config" }
+vibege-suspension = { path = "../vibege-suspension" }
+mlua = { version = "0.10", features = ["luau"] }
+tracing = "0.1"
+serde_json = "1"
+dirs = "5"

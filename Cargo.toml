@@ -6,10 +6,10 @@ members = [
     "crates/vibege-input",
     "crates/vibege-renderer",
     "crates/vibege-audio",
-    "crates/vibege-ipc",
-    "crates/vibege-sandbox",
     "crates/vibege-suspension",
     "crates/vibege-tray",
+    "crates/vibege-config",
+    "crates/vibege-scene",
     "crates/vibege-runtime-app",
 ]
 

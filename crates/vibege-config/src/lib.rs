@@ -71,6 +71,14 @@ impl Default for VibegeConfig {
     }
 }
 
+pub fn installed_games_dir() -> PathBuf {
+    if let Some(data_dir) = dirs::data_dir() {
+        data_dir.join("vibege").join("games")
+    } else {
+        PathBuf::from(".vibege/installed-games")
+    }
+}
+
 pub fn config_path() -> PathBuf {
     if let Some(data_dir) = dirs::data_dir() {
         data_dir.join("vibege").join("config.toml")

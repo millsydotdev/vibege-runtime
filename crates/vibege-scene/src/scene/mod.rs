@@ -44,7 +44,7 @@ pub struct SceneContext {
     /// Shared engine services.
     pub renderer: Arc<vibege_renderer::Renderer>,
     pub input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
-    pub config: Arc<crate::config::ConfigHandle>,
+    pub config: Arc<vibege_config::ConfigHandle>,
     /// Platform Lua VM — owned by SceneContext via Rc (not Send, accessed from main thread only).
     pub platform_lua: Rc<mlua::Lua>,
 }
@@ -54,7 +54,7 @@ impl SceneContext {
         width: u32, height: u32,
         renderer: Arc<vibege_renderer::Renderer>,
         input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
-        config: Arc<crate::config::ConfigHandle>,
+        config: Arc<vibege_config::ConfigHandle>,
         platform_lua: Rc<mlua::Lua>,
     ) -> Self {
         Self { screen_width: width, screen_height: height, renderer, input, config, platform_lua }

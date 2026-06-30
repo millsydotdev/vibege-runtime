@@ -281,6 +281,7 @@ fn main() -> anyhow::Result<()> {
     info!("Entering main loop");
     let mut last_frame = std::time::Instant::now();
     let has_lua_game = !is_launcher;
+    let mut state_restored = false;
 
     event_loop.run(move |event, elwt| {
         match event {
@@ -365,11 +366,11 @@ fn main() -> anyhow::Result<()> {
                     elwt.exit();
                     return;
                 }
-                // Restore saved state (game mode only)
-                if has_lua_game {
-                    let snap_id = suspension.list_snapshots().first().map(|s| s.id.clone());
-                    if let Some(ref id) = snap_id {
-                        if let Ok(snapshot) = suspension.resume(id) {
+                // Restore saved state once on first frame (game mode only)
+                if has_lua_game && !state_restored {
+                    state_restored = true;
+                    if let Some(snap) = suspension.list_snapshots().first().cloned() {
+                        if let Ok(snapshot) = suspension.resume(&snap.id) {
                             if let Ok(restore_fn) = lua.globals().get::<Function>("restore_state") {
                                 let state_str = String::from_utf8_lossy(&snapshot.game_state).to_string();
                                 let _ = restore_fn.call::<()>(state_str);

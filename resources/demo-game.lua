@@ -34,7 +34,7 @@ function update(dt)
 
     -- Paddle bounce
     if ball_y >= paddle_y - 8 and ball_y <= paddle_y + paddle_h
-       and ball_x >= paddle_y - 8 and ball_x <= paddle_y + paddle_w + 8
+       and ball_x >= 100 - 8 and ball_x <= 100 + paddle_w + 8
     then
         ball_dy = -ball_dy
         score = score + 1

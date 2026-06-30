@@ -1,3 +1,5 @@
+#![allow(deprecated)] // winit 0.30 APIs still work, not worth ApplicationHandler migration yet
+
 //! # VibeGE Window
 //!
 //! Cross-platform window management using `winit`.

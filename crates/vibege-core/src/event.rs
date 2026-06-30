@@ -153,7 +153,7 @@ impl EventBus {
     {
         if let Ok(mut subs) = self.subscribers.lock() {
             subs.push((priority, Box::new(f)));
-            subs.sort_by(|a, b| b.0.cmp(&a.0));
+            subs.sort_by_key(|k| std::cmp::Reverse(k.0));
         }
     }
 

@@ -259,6 +259,7 @@ impl Default for OverlayManager {
 ///
 /// On Windows: Sets `HWND_TOPMOST` for always-on-top.
 /// On other platforms: no-op (use window level APIs).
+#[allow(unused_variables)]
 pub fn apply_overlay_attributes(window: &Window, mode: OverlayMode) {
     if mode != OverlayMode::AlwaysOnTop {
         return;

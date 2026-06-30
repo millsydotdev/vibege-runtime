@@ -280,13 +280,13 @@ impl WindowManager {
                 }
 
                 // Notify event handler if set
+                #[allow(clippy::single_match)]
                 if let Some(ref mut h) = handler {
                     match &event {
                         winit::event::Event::WindowEvent { event, .. } => match event {
                             winit::event::WindowEvent::Resized(size) => {
                                 h.on_window_event(&WindowEvent::Resized {
-                                    width: size.width,
-                                    height: size.height,
+                                    width: size.width, height: size.height,
                                 });
                             }
                             winit::event::WindowEvent::Focused(true) => {
@@ -332,7 +332,6 @@ impl WindowManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vibege_core::RuntimeConfig;
 
     #[test]
     fn test_window_mode_equality() {
@@ -365,8 +364,7 @@ mod tests {
     #[test]
     fn test_window_mode_toggle_logic() {
         // Test the mode switching logic without GPU/window
-        let mut mode = WindowMode::Windowed;
-        mode = WindowMode::BorderlessFullscreen;
+        let mut mode = WindowMode::BorderlessFullscreen;
         assert_eq!(mode, WindowMode::BorderlessFullscreen);
         mode = WindowMode::Windowed;
         assert_eq!(mode, WindowMode::Windowed);

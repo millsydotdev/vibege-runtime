@@ -1,3 +1,5 @@
+mod config;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,6 +35,14 @@ struct RuntimeCli {
 
     #[arg(long = "overlay")]
     overlay: bool,
+
+    /// Start with window hidden (tray only).
+    #[arg(long = "hidden", default_value_t = false)]
+    start_hidden: bool,
+
+    /// Force window visible on startup (overrides hidden default).
+    #[arg(long = "show", default_value_t = false)]
+    show: bool,
 }
 
 #[allow(deprecated)] // winit 0.30 EventLoop::create_window / run — still works, not worth the ApplicationHandler refactor yet
@@ -47,11 +57,13 @@ fn main() -> anyhow::Result<()> {
     };
     let launcher_source = include_str!("../../../resources/launcher.lua");
     let demo_source = include_str!("../../../resources/demo-game.lua");
+    let first_run_source = include_str!("../../../resources/first-run.lua");
 
     // Embedded games accessible via vibege.runtime.switch_game(name)
     let embedded_games: HashMap<&str, &str> = [
         ("launcher", launcher_source),
         ("demo", demo_source),
+        ("first-run", first_run_source),
     ].into_iter().collect();
 
     let has_game = !cli.entry.is_empty() && !cli.project_dir.is_empty();
@@ -71,10 +83,28 @@ fn main() -> anyhow::Result<()> {
     };
 
     logging::init_logging(LogLevel::Info);
+
+    // Load player config (hotkey, position, startup behavior)
+    let cfg = Arc::new(config::ConfigHandle::new());
+    let is_first_run = cfg.is_first_run();
+    let player_config = cfg.get();
+    info!(first_run = is_first_run, config_loaded = true, "Player config loaded");
+
+    // Determine window visibility on startup
+    // Rules: --overlay or --project → visible. Otherwise hidden (tray-only).
+    let start_visible = cli.overlay || cli.show || has_game || !cli.start_hidden
+        || player_config.general.startup_behavior == "shown";
+
+    // Mark first-run as completed after first launch
+    if is_first_run {
+        info!("First run detected — launching setup wizard");
+        cfg.complete_first_run();
+    }
+
     if let Some(ref src) = game_source {
         info!("Game source loaded ({} bytes)", src.len());
     } else {
-        info!("Launcher mode — waiting for game selection");
+        info!("Player mode — waiting for hotkey");
     }
 
     let event_loop = EventLoop::new()
@@ -87,6 +117,7 @@ fn main() -> anyhow::Result<()> {
                 .with_title("VibeGE")
                 .with_inner_size(LogicalSize::new(cli.width as f64, cli.height as f64))
                 .with_decorations(!cli.overlay)
+                .with_visible(start_visible)
         )
         .map_err(|e| anyhow::anyhow!("Window: {e}"))?,
     );
@@ -106,6 +137,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
         info!("Overlay mode enabled — Ctrl+Shift+V to toggle");
+    }
+
+    if !start_visible {
+        info!("Runtime started in background — tray icon active");
     }
 
     // Start system tray (if available)
@@ -302,10 +337,55 @@ fn main() -> anyhow::Result<()> {
 
     vibege.set("runtime", runtime_table).expect("set runtime");
 
+    // Settings bindings — read/write player config from Lua
+    {
+        let cfg_handle = Arc::clone(&cfg);
+        let settings_table = lua.create_table().expect("create settings table");
+
+        let ch = Arc::clone(&cfg_handle);
+        settings_table.set("get", lua.create_function(move |lua, ()| {
+            let c = ch.get();
+            let t = lua.create_table().expect("t");
+            let _ = t.set("hotkey_modifiers", c.overlay.hotkey_modifiers);
+            let _ = t.set("hotkey_key", c.overlay.hotkey_key);
+            let _ = t.set("position", c.overlay.position);
+            let _ = t.set("width", c.overlay.width as i64);
+            let _ = t.set("height", c.overlay.height as i64);
+            let _ = t.set("volume", c.audio.volume);
+            let _ = t.set("startup_behavior", c.general.startup_behavior);
+            let _ = t.set("performance_mode", c.general.performance_mode);
+            Ok(t)
+        }).expect("create settings get")).expect("set settings get");
+
+        let ch2 = Arc::clone(&cfg_handle);
+        settings_table.set("set", lua.create_function(move |_, (key, value): (String, String)| {
+            let mut c = ch2.get();
+            match key.as_str() {
+                "hotkey_modifiers" => c.overlay.hotkey_modifiers = value,
+                "hotkey_key" => c.overlay.hotkey_key = value,
+                "position" => c.overlay.position = value,
+                "volume" => { if let Ok(v) = value.parse::<f32>() { c.audio.volume = v.clamp(0.0, 1.0); } }
+                "startup_behavior" => c.general.startup_behavior = value,
+                "performance_mode" => c.general.performance_mode = value,
+                _ => return Err(mlua::Error::RuntimeError(format!("Unknown setting: {key}"))),
+            }
+            ch2.set(c);
+            Ok(())
+        }).expect("create settings set")).expect("set settings set");
+
+        let ch3 = Arc::clone(&cfg_handle);
+        settings_table.set("is_first_run", lua.create_function(move |_, ()| {
+            Ok(ch3.is_first_run())
+        }).expect("create is_first_run")).expect("set is_first_run");
+
+        vibege.set("settings", settings_table).expect("set settings");
+    }
+
     lua.globals().set("vibege", vibege).expect("set vibege globals");
 
-    // Load game or launcher
-    let game_script = game_source.as_deref().unwrap_or(launcher_source);
+    // Determine default script: first-run wizard > launcher > game
+    let default_source = if is_first_run { first_run_source } else { launcher_source };
+    let game_script = game_source.as_deref().unwrap_or(default_source);
     let is_launcher = game_source.is_none();
 
     info!(is_launcher = is_launcher, "Loading game script");

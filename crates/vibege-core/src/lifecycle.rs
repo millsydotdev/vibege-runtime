@@ -258,6 +258,7 @@ impl App {
 
         #[cfg(unix)]
         {
+            use crate::{ErrorCode, RuntimeError};
             use signal_hook::consts::signal::*;
             use signal_hook::flag;
 

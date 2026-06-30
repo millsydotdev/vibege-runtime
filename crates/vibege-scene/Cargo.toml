@@ -12,6 +12,7 @@ vibege-input = { path = "../vibege-input" }
 vibege-audio = { path = "../vibege-audio" }
 vibege-config = { path = "../vibege-config" }
 vibege-suspension = { path = "../vibege-suspension" }
+vibege-sdk = { path = "../vibege-sdk" }
 mlua = { version = "0.10", features = ["luau"] }
 tracing = "0.1"
 serde_json = "1"

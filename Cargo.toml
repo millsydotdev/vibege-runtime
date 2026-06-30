@@ -9,6 +9,7 @@ members = [
     "crates/vibege-suspension",
     "crates/vibege-tray",
     "crates/vibege-config",
+    "crates/vibege-sdk",
     "crates/vibege-scene",
     "crates/vibege-runtime-app",
 ]

@@ -39,19 +39,19 @@ impl CollectionManager {
                 }
                 CollectionKind::RecentlyPlayed => {
                     let mut sorted: Vec<_> = games.iter().filter(|g| g.last_played > 0).collect();
-                    sorted.sort_by(|a, b| b.last_played.cmp(&a.last_played));
+                    sorted.sort_by_key(|k| std::cmp::Reverse(k.last_played));
                     collection.game_names =
                         sorted.iter().take(20).map(|g| g.name.clone()).collect();
                 }
                 CollectionKind::RecentlyInstalled => {
                     let mut sorted: Vec<_> = games.iter().collect();
-                    sorted.sort_by(|a, b| b.installed_at.cmp(&a.installed_at));
+                    sorted.sort_by_key(|k| std::cmp::Reverse(k.installed_at));
                     collection.game_names =
                         sorted.iter().take(20).map(|g| g.name.clone()).collect();
                 }
                 CollectionKind::MostPlayed => {
                     let mut sorted: Vec<_> = games.iter().collect();
-                    sorted.sort_by(|a, b| b.play_count.cmp(&a.play_count));
+                    sorted.sort_by_key(|k| std::cmp::Reverse(k.play_count));
                     collection.game_names =
                         sorted.iter().take(20).map(|g| g.name.clone()).collect();
                 }

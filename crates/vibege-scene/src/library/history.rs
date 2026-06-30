@@ -41,7 +41,7 @@ impl PlayHistory {
     /// Get recently played game names (most recent first).
     pub fn recently_played(&self, limit: usize) -> Vec<String> {
         let mut records = self.records.lock().expect("history lock").clone();
-        records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        records.sort_by_key(|k| std::cmp::Reverse(k.timestamp));
         records
             .iter()
             .take(limit)

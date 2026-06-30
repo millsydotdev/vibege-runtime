@@ -45,19 +45,19 @@ impl LibrarySearchEngine {
     fn sort_results(results: &mut Vec<&InstalledGame>, query: &LibraryQuery) {
         match query.sort_by {
             LibrarySortField::Name => {
-                results.sort_by(|a, b| a.name.cmp(&b.name));
+                results.sort_by_key(|k| k.name.clone());
             }
             LibrarySortField::InstallDate => {
-                results.sort_by(|a, b| a.installed_at.cmp(&b.installed_at));
+                results.sort_by_key(|k| k.installed_at);
             }
             LibrarySortField::LastPlayed => {
-                results.sort_by(|a, b| b.last_played.cmp(&a.last_played));
+                results.sort_by_key(|k| std::cmp::Reverse(k.last_played));
             }
             LibrarySortField::PlayTime => {
-                results.sort_by(|a, b| b.total_play_time_secs.cmp(&a.total_play_time_secs));
+                results.sort_by_key(|k| std::cmp::Reverse(k.total_play_time_secs));
             }
             LibrarySortField::PlayCount => {
-                results.sort_by(|a, b| b.play_count.cmp(&a.play_count));
+                results.sort_by_key(|k| std::cmp::Reverse(k.play_count));
             }
             LibrarySortField::Size => {
                 results.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));

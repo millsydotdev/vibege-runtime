@@ -76,18 +76,37 @@ fn create_window() -> (winit::event_loop::EventLoop<()>, Arc<winit::window::Wind
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let el = winit::event_loop::EventLoop::builder()
-            .build()
-            .expect("EventLoop");
-        let w = Arc::new(
-            el.create_window(
-                winit::window::WindowAttributes::default()
-                    .with_visible(false)
-                    .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0)),
-            )
-            .expect("Test window"),
-        );
-        (el, w)
+        #[cfg(target_os = "linux")]
+        {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            let mut builder = winit::event_loop::EventLoop::builder();
+            builder.with_any_thread(true);
+            let el = builder.build().expect("EventLoop (any_thread)");
+            let w = Arc::new(
+                el.create_window(
+                    winit::window::WindowAttributes::default()
+                        .with_visible(false)
+                        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0)),
+                )
+                .expect("Test window"),
+            );
+            return (el, w);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let el = winit::event_loop::EventLoop::builder()
+                .build()
+                .expect("EventLoop");
+            let w = Arc::new(
+                el.create_window(
+                    winit::window::WindowAttributes::default()
+                        .with_visible(false)
+                        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0)),
+                )
+                .expect("Test window"),
+            );
+            (el, w)
+        }
     }
 }
 

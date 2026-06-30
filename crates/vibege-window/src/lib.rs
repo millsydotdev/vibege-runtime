@@ -286,7 +286,8 @@ impl WindowManager {
                         winit::event::Event::WindowEvent { event, .. } => match event {
                             winit::event::WindowEvent::Resized(size) => {
                                 h.on_window_event(&WindowEvent::Resized {
-                                    width: size.width, height: size.height,
+                                    width: size.width,
+                                    height: size.height,
                                 });
                             }
                             winit::event::WindowEvent::Focused(true) => {

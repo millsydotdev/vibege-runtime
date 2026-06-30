@@ -1,4 +1,5 @@
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
+use std::io::Read;
 use tracing::info;
 
 fn scan_games() -> Vec<serde_json::Value> {
@@ -64,6 +65,50 @@ pub struct LibraryScene {
     selection: usize,
     games: Vec<serde_json::Value>,
     favourites: std::collections::HashSet<String>,
+    updates: std::collections::HashMap<String, String>, // game name -> latest version
+}
+
+fn check_for_updates(
+    games: &[serde_json::Value],
+    backend: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut updates = std::collections::HashMap::new();
+    for game in games {
+        let name = game["name"].as_str().unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let installed_ver = game["version"].as_str().unwrap_or("0.0.0");
+        // Fetch latest from registry
+        let url = format!("{backend}/registry/{}", urlencoding(name));
+        if let Ok(resp) = ureq::get(&url).call() {
+            let mut body = String::new();
+            if resp
+                .into_body()
+                .into_reader()
+                .read_to_string(&mut body)
+                .is_ok()
+            {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    let latest = json["package"]["updatedAt"].as_str().unwrap_or("");
+                    if !latest.is_empty() && latest != installed_ver {
+                        updates.insert(name.to_string(), latest.to_string());
+                    }
+                }
+            }
+        }
+    }
+    updates
+}
+
+fn urlencoding(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c.to_string(),
+            ' ' => "+".into(),
+            _ => format!("%{:02X}", c as u8),
+        })
+        .collect()
 }
 
 impl LibraryScene {
@@ -72,7 +117,13 @@ impl LibraryScene {
             selection: 0,
             games: scan_games(),
             favourites: std::collections::HashSet::new(),
+            updates: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn with_updates(mut self, backend: &str) -> Self {
+        self.updates = check_for_updates(&self.games, backend);
+        self
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
@@ -290,6 +341,7 @@ impl Scene for LibraryScene {
                 let entry = game["entry"].as_str().unwrap_or("src/main.lua");
                 let size_val = game["_size"].as_u64().unwrap_or(0);
                 let is_fav = self.favourites.contains(name);
+                let has_update = self.updates.contains_key(name);
 
                 let fav = if is_fav { "★ " } else { "  " };
                 self.text(
@@ -302,6 +354,10 @@ impl Scene for LibraryScene {
                     1.0,
                     1.0,
                 );
+                if has_update {
+                    self.rect(ctx, 680.0, y + 4.0, 56.0, 14.0, 0.9, 0.7, 0.2, 0.2);
+                    self.text(ctx, 686.0, y + 5.0, "UPDATE", 7.0, 0.9, 0.7, 0.2);
+                }
                 self.text(
                     ctx,
                     46.0,

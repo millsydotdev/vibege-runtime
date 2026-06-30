@@ -242,8 +242,9 @@ impl Scene for HomeScene {
             )));
         }
         if self.input_pressed(ctx, "l") {
+            let backend = ctx.config.get().general.backend_url;
             return Ok(SceneAction::Push(Box::new(
-                super::library_scene::LibraryScene::new(),
+                super::library_scene::LibraryScene::new().with_updates(&backend),
             )));
         }
         if self.input_pressed(ctx, "o") {

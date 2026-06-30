@@ -4,6 +4,7 @@ mod scenes;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -161,9 +162,7 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     // ── Platform Lua VM (temporary — for launcher/first-run migration) ──
-    let platform_lua = Lua::new();
-    // Store globally so scenes can access it without needing Send
-    scene::PLATFORM_LUA.set(scene::LuaPtr(&platform_lua as *const Lua as *mut Lua)).ok();
+    let platform_lua = Rc::new(Lua::new());
     let vibege = platform_lua.create_table().expect("create vibege table");
 
     // Input bindings for platform Lua
@@ -336,6 +335,7 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&renderer),
         Arc::clone(&input),
         Arc::clone(&cfg),
+        Rc::clone(&platform_lua),
     );
     let mut scene_manager = scene::SceneManager::new();
     scene_manager.push(Box::new(BootScene::new()), &mut scene_ctx)

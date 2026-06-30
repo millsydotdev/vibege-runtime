@@ -1,11 +1,6 @@
-//! GameScene — wraps a GameSession in the scene lifecycle.
-//!
-//! The game runs in its own isolated Lua VM.
-//! When the game exits (via error or completion), the scene pops back to Home.
-
 use std::sync::Arc;
 use std::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
 use vibege_audio::AudioSystem;
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
@@ -27,18 +22,14 @@ impl GameScene {
         input: Arc<Mutex<InputManager>>,
         audio: Option<Arc<AudioSystem>>,
     ) -> Self {
-        Self {
-            session: None,
-            game_source: source,
-            renderer, input, audio,
-        }
+        Self { session: None, game_source: source, renderer, input, audio }
     }
 }
 
 impl Scene for GameScene {
     fn id(&self) -> SceneId { SceneId::Game }
 
-    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
+    fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
         info!("GameScene: creating game session");
         match GameSession::load(&self.game_source, &self.renderer, &self.input, &self.audio) {
             Ok(session) => {
@@ -46,8 +37,7 @@ impl Scene for GameScene {
                 Ok(SceneAction::Continue)
             }
             Err(e) => {
-                warn!("GameScene: failed to load game: {e}");
-                // Return to home on failure
+                info!("GameScene: failed to load game: {e}");
                 Ok(SceneAction::Pop)
             }
         }

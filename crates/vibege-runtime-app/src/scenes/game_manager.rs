@@ -6,22 +6,12 @@ use vibege_audio::AudioSystem;
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
 
-/// Live game session with its own isolated Lua VM.
-/// Uses a raw pointer to break the !Send constraint on mlua::Lua.
+/// A live game session with its own isolated Lua VM.
+/// Not Send — runs on the main thread only.
 pub struct GameSession {
-    lua: *mut Lua,
+    lua: Lua,
     has_update: bool,
     has_render: bool,
-}
-
-unsafe impl Send for GameSession {}
-
-impl Drop for GameSession {
-    fn drop(&mut self) {
-        if !self.lua.is_null() {
-            unsafe { drop(Box::from_raw(self.lua)); }
-        }
-    }
 }
 
 impl GameSession {
@@ -113,18 +103,12 @@ impl GameSession {
         }
 
         info!("Game session created");
-        let lua_ptr = Box::into_raw(Box::new(lua));
-        Ok(Self { lua: lua_ptr, has_update, has_render })
-    }
-
-    fn lua(&self) -> &Lua {
-        unsafe { &*self.lua }
+        Ok(Self { lua, has_update, has_render })
     }
 
     pub fn update(&self, dt: f64) -> Result<(), String> {
         if self.has_update {
-            let lua = self.lua();
-            if let Ok(update_fn) = lua.globals().get::<Function>("update") {
+            if let Ok(update_fn) = self.lua.globals().get::<Function>("update") {
                 update_fn.call::<()>(dt).map_err(|e| format!("Game update error: {e}"))?;
             }
         }
@@ -133,8 +117,7 @@ impl GameSession {
 
     pub fn render(&self) -> Result<(), String> {
         if self.has_render {
-            let lua = self.lua();
-            if let Ok(render_fn) = lua.globals().get::<Function>("render") {
+            if let Ok(render_fn) = self.lua.globals().get::<Function>("render") {
                 render_fn.call::<()>(()).map_err(|e| format!("Game render error: {e}"))?;
             }
         }
@@ -142,22 +125,19 @@ impl GameSession {
     }
 
     pub fn suspend(&self) {
-        let lua = self.lua();
-        if let Ok(suspend_fn) = lua.globals().get::<Function>("suspend") {
+        if let Ok(suspend_fn) = self.lua.globals().get::<Function>("suspend") {
             let _ = suspend_fn.call::<()>(());
         }
     }
 
     pub fn resume(&self) {
-        let lua = self.lua();
-        if let Ok(resume_fn) = lua.globals().get::<Function>("resume") {
+        if let Ok(resume_fn) = self.lua.globals().get::<Function>("resume") {
             let _ = resume_fn.call::<()>(());
         }
     }
 
     pub fn get_state(&self) -> Option<String> {
-        let lua = self.lua();
-        if let Ok(state_fn) = lua.globals().get::<Function>("get_state") {
+        if let Ok(state_fn) = self.lua.globals().get::<Function>("get_state") {
             state_fn.call::<String>("").ok()
         } else {
             None

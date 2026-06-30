@@ -1,18 +1,9 @@
 //! Scene graph types for the VibeGE platform.
 
+use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 pub mod manager;
-
-/// Wrapper to store raw Lua pointer in OnceLock (which requires Send).
-#[repr(transparent)]
-pub struct LuaPtr(pub *mut mlua::Lua);
-unsafe impl Send for LuaPtr {}
-unsafe impl Sync for LuaPtr {}
-
-/// Global platform Lua VM — set once during startup, used by Home/FirstRun scenes.
-pub static PLATFORM_LUA: OnceLock<LuaPtr> = OnceLock::new();
 
 pub use manager::SceneManager;
 
@@ -54,6 +45,8 @@ pub struct SceneContext {
     pub renderer: Arc<vibege_renderer::Renderer>,
     pub input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
     pub config: Arc<crate::config::ConfigHandle>,
+    /// Platform Lua VM — owned by SceneContext via Rc (not Send, accessed from main thread only).
+    pub platform_lua: Rc<mlua::Lua>,
 }
 
 impl SceneContext {
@@ -62,18 +55,17 @@ impl SceneContext {
         renderer: Arc<vibege_renderer::Renderer>,
         input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
         config: Arc<crate::config::ConfigHandle>,
+        platform_lua: Rc<mlua::Lua>,
     ) -> Self {
-        Self { screen_width: width, screen_height: height, renderer, input, config }
+        Self { screen_width: width, screen_height: height, renderer, input, config, platform_lua }
     }
 }
 
 /// Lifecycle for a single platform scene.
 ///
-/// Scenes are managed by the SceneManager. Only the topmost scene receives
-/// update/render calls. Suspended scenes receive no CPU time.
-///
-/// Games are NOT scenes — they are managed by GameManager.
-pub trait Scene: Send {
+/// Scenes run on the main thread. The event loop closure is FnMut + 'static,
+/// NOT Send — so scenes can hold non-Send types like Rc<Lua>.
+pub trait Scene {
     fn id(&self) -> SceneId;
 
     fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {

@@ -110,12 +110,18 @@ mod tests {
         let count = std::sync::Arc::new(AtomicUsize::new(0));
 
         let c1 = Arc::clone(&count);
-        bus.subscribe(move |_| { c1.fetch_add(1, Ordering::SeqCst); });
+        bus.subscribe(move |_| {
+            c1.fetch_add(1, Ordering::SeqCst);
+        });
         let c2 = Arc::clone(&count);
-        bus.subscribe(move |_| { c2.fetch_add(1, Ordering::SeqCst); });
+        bus.subscribe(move |_| {
+            c2.fetch_add(1, Ordering::SeqCst);
+        });
 
         bus.publish(&RuntimeEvent::HotkeyPressed);
-        bus.publish(&RuntimeEvent::SettingsChanged { key: "volume".into() });
+        bus.publish(&RuntimeEvent::SettingsChanged {
+            key: "volume".into(),
+        });
 
         assert_eq!(count.load(Ordering::SeqCst), 4);
     }

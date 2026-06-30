@@ -129,6 +129,12 @@ pub struct ConfigHandle {
     inner: Mutex<VibegeConfig>,
 }
 
+impl Default for ConfigHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigHandle {
     pub fn new() -> Self {
         Self {

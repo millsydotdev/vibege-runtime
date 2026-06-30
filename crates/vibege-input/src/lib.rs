@@ -463,7 +463,7 @@ pub fn key_name_to_code(name: &str) -> KeyCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::{KeyCode, PhysicalKey};
+    use winit::keyboard::KeyCode;
 
     #[test]
     fn test_input_manager_creation() {

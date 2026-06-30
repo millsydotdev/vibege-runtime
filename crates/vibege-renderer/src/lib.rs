@@ -432,6 +432,7 @@ impl Renderer {
     }
 
     /// Queue a colored rectangle for the next frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_rect(&self, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
         self.draw_list.lock().unwrap().push(DrawCmd::Rect {
             x,

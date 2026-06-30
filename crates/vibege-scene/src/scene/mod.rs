@@ -1,6 +1,5 @@
 //! Scene graph types for the VibeGE platform.
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 pub mod manager;
@@ -47,8 +46,6 @@ pub struct SceneContext {
     pub renderer: Arc<vibege_renderer::Renderer>,
     pub input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
     pub config: Arc<vibege_config::ConfigHandle>,
-    /// Platform Lua VM — owned by SceneContext via Rc.
-    pub platform_lua: Rc<mlua::Lua>,
     /// Event bus for inter-subsystem communication.
     pub event_bus: Option<Arc<EventBus>>,
 }
@@ -59,10 +56,9 @@ impl SceneContext {
         renderer: Arc<vibege_renderer::Renderer>,
         input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
         config: Arc<vibege_config::ConfigHandle>,
-        platform_lua: Rc<mlua::Lua>,
         event_bus: Option<Arc<EventBus>>,
     ) -> Self {
-        Self { screen_width: width, screen_height: height, renderer, input, config, platform_lua, event_bus }
+        Self { screen_width: width, screen_height: height, renderer, input, config, event_bus }
     }
 }
 

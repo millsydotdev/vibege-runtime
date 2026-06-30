@@ -48,9 +48,9 @@ function update(dt)
         ball_dx, ball_dy = 3, -2
     end
 
-    -- Escape goes back to launcher
+    -- Escape exits back to Home
     if vibege.input.is_key_down("escape") then
-        vibege.runtime.switch_game("launcher")
+        error("exit", 0)
     end
 end
 

@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use tracing::info;
 use crate::scene::{Scene, SceneId, SceneContext, SceneAction, SceneResult};
 
@@ -7,9 +6,7 @@ pub struct BootScene {
 }
 
 impl BootScene {
-    pub fn new() -> Self {
-        Self { initialized: false }
-    }
+    pub fn new() -> Self { Self { initialized: false } }
 }
 
 impl Scene for BootScene {
@@ -23,19 +20,16 @@ impl Scene for BootScene {
     }
 
     fn on_enter(&mut self, ctx: &mut SceneContext) -> SceneResult {
-        if self.initialized {
-            return Ok(SceneAction::Continue);
-        }
+        if self.initialized { return Ok(SceneAction::Continue); }
         self.initialized = true;
 
-        let lua = Rc::clone(&ctx.platform_lua);
         let cfg = ctx.config.get();
         if !cfg.general.first_run_complete {
             info!("BootScene: first run detected — launching wizard");
-            Ok(SceneAction::Push(Box::new(super::first_run_scene::FirstRunScene::new(lua))))
+            Ok(SceneAction::Push(Box::new(super::first_run_scene::FirstRunScene::new())))
         } else {
             info!("BootScene: returning player — launching home");
-            Ok(SceneAction::Replace(Box::new(super::home_scene::HomeScene::new(lua))))
+            Ok(SceneAction::Replace(Box::new(super::home_scene::HomeScene::new())))
         }
     }
 }

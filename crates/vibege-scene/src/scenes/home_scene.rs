@@ -78,7 +78,7 @@ impl HomeScene {
     fn input_pressed(&self, ctx: &SceneContext, key: &str) -> bool {
         ctx.input
             .lock()
-            .unwrap()
+            .expect("lock")
             .is_key_pressed(vibege_input::key_name_to_code(key))
     }
 
@@ -220,7 +220,7 @@ impl Scene for HomeScene {
     fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
         info!("HomeScene: started");
         // Reset input state
-        ctx.input.lock().unwrap().end_frame();
+        ctx.input.lock().expect("lock").end_frame();
         self.scan_installed_games();
         info!(count = self.entries.len(), "HomeScene: games loaded");
         Ok(SceneAction::Continue)
@@ -235,6 +235,16 @@ impl Scene for HomeScene {
         }
         if self.input_pressed(ctx, "enter") || self.input_pressed(ctx, "space") {
             return self.launch_selected(ctx);
+        }
+        if self.input_pressed(ctx, "s") {
+            return Ok(SceneAction::Push(Box::new(
+                super::settings_scene::SettingsScene::new(),
+            )));
+        }
+        if self.input_pressed(ctx, "l") {
+            return Ok(SceneAction::Push(Box::new(
+                super::library_scene::LibraryScene::new(),
+            )));
         }
 
         Ok(SceneAction::Continue)
@@ -277,7 +287,7 @@ impl Scene for HomeScene {
             ctx,
             margin + 8.0,
             y + 3.0,
-            "Arrows: Navigate     Enter: Launch     Esc: Home",
+            "Arrows: Navigate     Enter: Launch     S: Settings     L: Library",
             7.0,
             0.5,
             0.5,

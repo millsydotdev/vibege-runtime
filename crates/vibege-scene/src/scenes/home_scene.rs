@@ -246,6 +246,11 @@ impl Scene for HomeScene {
                 super::library_scene::LibraryScene::new(),
             )));
         }
+        if self.input_pressed(ctx, "o") {
+            return Ok(SceneAction::Push(Box::new(
+                super::store_scene::StoreScene::new(),
+            )));
+        }
 
         Ok(SceneAction::Continue)
     }
@@ -287,7 +292,7 @@ impl Scene for HomeScene {
             ctx,
             margin + 8.0,
             y + 3.0,
-            "Arrows: Navigate     Enter: Launch     S: Settings     L: Library",
+            "Arrows: Navigate     Enter: Launch     S: Settings     L: Library     O: Store",
             7.0,
             0.5,
             0.5,

@@ -5,3 +5,4 @@ pub mod game_scene;
 pub mod home_scene;
 pub mod library_scene;
 pub mod settings_scene;
+pub mod store_scene;

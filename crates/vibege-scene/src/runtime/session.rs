@@ -104,7 +104,7 @@ impl SessionController {
         let audio = self.ctx.audio.clone();
         let assets = Arc::clone(&self.ctx.assets);
 
-        let sdk_state = SdkState::new();
+        let sdk_state = SdkState::new("0.2.0-alpha.1", 800, 600);
         let session = GameSession::load(
             &self.ctx.game_name,
             &self.ctx.source,

@@ -123,7 +123,7 @@ impl HomeScene {
         }
     }
 
-    fn launch_selected(&self, _ctx: &mut SceneContext) -> SceneResult {
+    fn launch_selected(&self, ctx: &mut SceneContext) -> SceneResult {
         let Some(game) = self.entries.get(self.selection) else {
             return Ok(SceneAction::Continue);
         };
@@ -138,6 +138,8 @@ impl HomeScene {
             let game_scene = Box::new(super::game_scene::GameScene::new(
                 source.to_string(),
                 game.name.clone(),
+                ctx.screen_width,
+                ctx.screen_height,
             ));
             return Ok(SceneAction::Push(game_scene));
         }
@@ -147,8 +149,12 @@ impl HomeScene {
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => {
-                    let game_scene =
-                        Box::new(super::game_scene::GameScene::new(source, game.name.clone()));
+                    let game_scene = Box::new(super::game_scene::GameScene::new(
+                        source,
+                        game.name.clone(),
+                        ctx.screen_width,
+                        ctx.screen_height,
+                    ));
                     Ok(SceneAction::Push(game_scene))
                 }
                 Err(e) => {

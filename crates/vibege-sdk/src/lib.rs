@@ -11,11 +11,15 @@
 //! - `vibege.assets.*` — Asset query and release
 //! - `vibege.storage.*` — Per-game key-value storage
 //! - `vibege.runtime.*` — Engine version, frame timing, screen info, platform
-//! - `vibege.util.*` — Logging, math utilities, randomness
+//! - `vibege.math.*` — Vec2, Rect, Color, math utilities
+//! - `vibege.debug.*` — Runtime debugging, statistics, overlay diagnostics
+//! - `vibege.util.*` — Logging, randomness
 
 pub mod assets;
 pub mod audio;
+pub mod debug;
 pub mod input;
+pub mod math;
 pub mod render;
 pub mod runtime;
 pub mod storage;
@@ -34,24 +38,38 @@ use vibege_renderer::Renderer;
 pub use storage::GameStorage;
 
 /// Shared runtime state accessible from Lua APIs.
-///
-/// Updated once per frame by the engine. Provides timing, frame counting,
-/// and diagnostic information to all SDK modules.
 pub struct SdkState {
     pub delta_time_secs: f64,
     pub game_time_secs: f64,
     pub frame_count: u64,
-    #[allow(dead_code)]
+    pub fps: f64,
+    pub uptime_secs: f64,
+    pub paused: bool,
+    pub debug_mode: bool,
     start_time: Instant,
+    fps_frame_count: u64,
+    fps_timer: Instant,
+    pub screen_width: u32,
+    pub screen_height: u32,
+    pub engine_version: String,
 }
 
 impl SdkState {
-    pub fn new() -> Arc<Mutex<Self>> {
+    pub fn new(engine_version: &str, screen_width: u32, screen_height: u32) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
             delta_time_secs: 0.0,
             game_time_secs: 0.0,
             frame_count: 0,
+            fps: 0.0,
+            uptime_secs: 0.0,
+            paused: false,
+            debug_mode: false,
             start_time: Instant::now(),
+            fps_frame_count: 0,
+            fps_timer: Instant::now(),
+            screen_width,
+            screen_height,
+            engine_version: engine_version.to_string(),
         }))
     }
 
@@ -59,8 +77,17 @@ impl SdkState {
     pub fn tick(state: &Arc<Mutex<Self>>, dt: f64) {
         if let Ok(mut s) = state.lock() {
             s.delta_time_secs = dt;
-            s.game_time_secs += dt;
+            if !s.paused {
+                s.game_time_secs += dt;
+            }
+            s.uptime_secs = s.start_time.elapsed().as_secs_f64();
             s.frame_count = s.frame_count.wrapping_add(1);
+            s.fps_frame_count += 1;
+            if s.fps_timer.elapsed().as_secs_f64() >= 0.5 {
+                s.fps = s.fps_frame_count as f64 / s.fps_timer.elapsed().as_secs_f64();
+                s.fps_frame_count = 0;
+                s.fps_timer = Instant::now();
+            }
         }
     }
 }
@@ -117,6 +144,14 @@ pub fn register_game_api(
         &rt_state,
     )?;
     vibege.set("runtime", runtime_table).map_err(lua_err)?;
+
+    let math_table = math::register_math_api(lua)?;
+    vibege.set("math", math_table).map_err(lua_err)?;
+
+    let dbg_state = Arc::clone(sdk_state);
+    let dbg_renderer = Arc::clone(renderer);
+    let debug_table = debug::register_debug_api(lua, &dbg_state, &dbg_renderer, assets)?;
+    vibege.set("debug", debug_table).map_err(lua_err)?;
 
     let ut_state = Arc::clone(sdk_state);
     let util_table = util::register_util_api(lua, &ut_state)?;

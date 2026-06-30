@@ -223,6 +223,8 @@ impl Scene for LibraryScene {
                                 let gs = Box::new(super::game_scene::GameScene::new(
                                     source,
                                     game.name.clone(),
+                                    ctx.screen_width,
+                                    ctx.screen_height,
                                 ));
                                 return Ok(SceneAction::Push(gs));
                             }

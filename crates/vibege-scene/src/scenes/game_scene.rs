@@ -14,13 +14,13 @@ pub struct GameScene {
 }
 
 impl GameScene {
-    pub fn new(source: String, game_name: String) -> Self {
+    pub fn new(source: String, game_name: String, screen_width: u32, screen_height: u32) -> Self {
         Self {
             session: None,
             game_source: source,
             game_name,
             snapshot_id: None,
-            sdk_state: SdkState::new(),
+            sdk_state: SdkState::new("0.2.0-alpha.1", screen_width, screen_height),
         }
     }
 }

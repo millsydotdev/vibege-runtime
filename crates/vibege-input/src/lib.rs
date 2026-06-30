@@ -189,6 +189,11 @@ impl InputManager {
         self.mouse.button_states.get(&button) == Some(&ButtonState::Pressed)
     }
 
+    /// Returns `true` if the specified mouse button was released this frame.
+    pub fn is_mouse_button_released(&self, button: MouseButton) -> bool {
+        self.mouse.button_states.get(&button) == Some(&ButtonState::Released)
+    }
+
     /// Returns the scroll wheel delta since last frame.
     pub fn scroll_delta(&self) -> (f64, f64) {
         self.mouse.scroll_delta

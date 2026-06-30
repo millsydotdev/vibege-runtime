@@ -118,6 +118,16 @@ pub fn register_input_api(lua: &Lua, input: &Arc<Mutex<InputManager>>) -> Result
         .map_err(|e| e.to_string())?;
 
     let inp = Arc::clone(input);
+    let is_mb_rel = lua
+        .create_function(move |_, btn: String| {
+            Ok(lock_input(&inp).is_mouse_button_released(name_to_mouse_button(&btn)))
+        })
+        .map_err(|e| e.to_string())?;
+    input_table
+        .set("is_mouse_released", is_mb_rel)
+        .map_err(|e| e.to_string())?;
+
+    let inp = Arc::clone(input);
     let gp_conn = lua
         .create_function(move |_, ()| Ok(lock_input(&inp).is_gamepad_connected()))
         .map_err(|e| e.to_string())?;

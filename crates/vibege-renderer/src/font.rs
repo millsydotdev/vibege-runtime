@@ -149,3 +149,50 @@ pub fn font_atlas_rgba() -> Vec<u8> {
 pub fn text_width(text: &str, char_w: f32) -> f32 {
     text.chars().count() as f32 * char_w
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_font_atlas_size() {
+        let rgba = font_atlas_rgba();
+        // 128x48 pixels x 4 bytes
+        assert_eq!(rgba.len(), 128 * 48 * 4);
+    }
+
+    #[test]
+    fn test_font_atlas_has_expected_pixels() {
+        let rgba = font_atlas_rgba();
+        // Space (char 32, index 0, position 0,0) should be all transparent
+        let first_pixel = &rgba[0..4];
+        assert_eq!(first_pixel, &[0, 0, 0, 0], "Space glyph should be transparent");
+        // 'A' (char 65, index 33, col 1, row 2) should have some opaque pixels
+        // Pixel at atlas position (8, 16) = row 2 * 128 + col 1 * 8 = byte index (2*128+1*8)*4
+        let a_pixel = &rgba[(2 * 128 + 8) * 4..(2 * 128 + 8) * 4 + 4];
+        // 'A' top row is 0x18 = 00011000, so pixel 2 and 3 of row 0 should be white
+        // But since we're at absolute atlas coords, we need to be at row 16, col 8
+        // Character 'A' local_idx = 33, col = 33 % 16 = 1, row = 33 / 16 = 2
+        // Pixel (8, 16) = base_x=1*8=8, base_y=2*8=16, row 0 of glyph = byte 0 = 0x18
+        // Bits: 0x18 = 00011000, so columns 2 and 3 (0-indexed) are set
+        // Atlas pixel (8 + 2, 16 + 0) = (10, 16), but we're reading (8, 16) which is column 0 row 0 of 'A'
+        // Column 0 of 0x18 = bit 7 = 0 = transparent
+        assert_eq!(a_pixel, &[0, 0, 0, 0], "First column of 'A' should be transparent");
+    }
+
+    #[test]
+    fn test_all_chars_have_correct_count() {
+        // 95 non-control chars (32-126 inclusive)
+        let count = (LAST_CHAR - FIRST_CHAR + 1) as usize;
+        assert_eq!(count, 95);
+        // Each char is 8 bytes
+        assert_eq!(FONT_BITS.len(), count * 8);
+    }
+
+    #[test]
+    fn test_text_width_calculation() {
+        assert_eq!(text_width("Hi", 8.0), 16.0);
+        assert_eq!(text_width("Hello", 10.0), 50.0);
+        assert_eq!(text_width("", 8.0), 0.0);
+    }
+}

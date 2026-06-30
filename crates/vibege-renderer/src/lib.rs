@@ -914,3 +914,54 @@ fn create_solid_color_texture(
         view,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_draw_list_queue_and_drain() {
+        let list = Mutex::new(Vec::new());
+        list.lock().unwrap().push(DrawCmd::Rect {
+            x: 10.0, y: 20.0, w: 100.0, h: 50.0,
+            r: 1.0, g: 0.0, b: 0.0, a: 1.0,
+        });
+        list.lock().unwrap().push(DrawCmd::Sprite { tex_idx: 0, x: 0.0, y: 0.0, w: 32.0, h: 32.0 });
+        list.lock().unwrap().push(DrawCmd::Glyph {
+            x: 50.0, y: 50.0, w: 8.0, h: 8.0,
+            u1: 0.0, v1: 0.0, u2: 0.0625, v2: 0.1667,
+            r: 1.0, g: 1.0, b: 1.0,
+        });
+        let cmds = list.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(cmds.len(), 3);
+        match &cmds[0] {
+            DrawCmd::Rect { x, y, .. } => { assert_eq!(*x, 10.0); assert_eq!(*y, 20.0); }
+            _ => panic!("Expected Rect"),
+        }
+    }
+
+    #[test]
+    fn test_clear_color_storage() {
+        let clear_color = Mutex::new((0.0f32, 0.0f32, 0.0f32, 1.0f32));
+        *clear_color.lock().unwrap() = (0.1, 0.2, 0.3, 0.5);
+        let (r, g, b, a) = *clear_color.lock().unwrap();
+        assert!((r - 0.1).abs() < 1e-6f32);
+        assert!((g - 0.2).abs() < 1e-6f32);
+        assert!((b - 0.3).abs() < 1e-6f32);
+        assert!((a - 0.5).abs() < 1e-6f32);
+    }
+
+    #[test]
+    fn test_rect_ndc_conversion() {
+        let sw: f32 = 800.0;
+        let sh: f32 = 600.0;
+        let x1 = (0.0 / sw) * 2.0 - 1.0;
+        let y1 = 1.0 - (0.0 / sh) * 2.0;
+        let x2 = (800.0 / sw) * 2.0 - 1.0;
+        let y2 = 1.0 - (600.0 / sh) * 2.0;
+        assert!((x1 - (-1.0)).abs() < 1e-6f32);
+        assert!((y1 - 1.0).abs() < 1e-6f32);
+        assert!((x2 - 1.0).abs() < 1e-6f32);
+        assert!((y2 - (-1.0)).abs() < 1e-6f32);
+    }
+}

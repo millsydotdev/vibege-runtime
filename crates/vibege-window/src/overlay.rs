@@ -261,10 +261,6 @@ impl Default for OverlayManager {
 /// On other platforms: no-op (use window level APIs).
 #[allow(unused_variables)]
 pub fn apply_overlay_attributes(window: &Window, mode: OverlayMode) {
-    if mode != OverlayMode::AlwaysOnTop {
-        return;
-    }
-
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};

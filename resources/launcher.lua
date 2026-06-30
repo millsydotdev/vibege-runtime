@@ -91,6 +91,17 @@ function update(dt)
         local game = active[selection]
         if game then
             print("Launching: " .. game.name)
+            if game.name == "Pong" then
+                vibege.runtime.switch_game("demo")
+            elseif game.name == "Asteroids" then
+                vibege.runtime.switch_game("demo")
+            elseif game.name == "Snake" then
+                vibege.runtime.switch_game("demo")
+            elseif game.name == "Void Drifter" then
+                vibege.runtime.switch_game("demo")
+            elseif game.name == "Block Puzzle" then
+                vibege.runtime.switch_game("demo")
+            end
         end
     end
 

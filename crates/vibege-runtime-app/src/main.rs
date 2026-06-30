@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use clap::Parser;
 use mlua::{Function, Lua};
@@ -43,6 +45,14 @@ fn main() -> anyhow::Result<()> {
         PathBuf::from(&cli.project_dir)
     };
     let launcher_source = include_str!("../../../resources/launcher.lua");
+    let demo_source = include_str!("../../../resources/demo-game.lua");
+
+    // Embedded games accessible via vibege.runtime.switch_game(name)
+    let embedded_games: HashMap<&str, &str> = [
+        ("launcher", launcher_source),
+        ("demo", demo_source),
+    ].into_iter().collect();
+
     let has_game = !cli.entry.is_empty() && !cli.project_dir.is_empty();
     let game_source: Option<String> = if has_game {
         let project_dir = PathBuf::from(&cli.project_dir);
@@ -241,6 +251,18 @@ fn main() -> anyhow::Result<()> {
     time_table.set("elapsed", lua.create_function(move |_, ()| Ok(st.elapsed().as_secs_f64())).expect("create elapsed")).expect("set elapsed");
     vibege.set("time", time_table).expect("set time");
 
+    // Runtime bindings — game switching
+    let pending_switch: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let runtime_table = lua.create_table().expect("create runtime table");
+    {
+        let ps = Arc::clone(&pending_switch);
+        runtime_table.set("switch_game", lua.create_function(move |_, name: String| {
+            *ps.lock().unwrap() = Some(name);
+            Ok(())
+        }).expect("create switch_game")).expect("set switch_game");
+    }
+    vibege.set("runtime", runtime_table).expect("set runtime");
+
     lua.globals().set("vibege", vibege).expect("set vibege globals");
 
     // Load game or launcher
@@ -381,6 +403,34 @@ fn main() -> anyhow::Result<()> {
                         error!("render(): {e}");
                         elwt.exit();
                         return;
+                    }
+                }
+
+                // Check for game switch request from Lua
+                if let Some(game_name) = pending_switch.lock().unwrap().take() {
+                    let script = embedded_games.get(game_name.as_str()).copied();
+                    if let Some(src) = script {
+                        info!(game = %game_name, "Switching to embedded game");
+                        if let Err(e) = lua.load(src).exec() {
+                            warn!("Script error: {e}");
+                        } else if let Ok(init_fn) = lua.globals().get::<Function>("init") {
+                            let _ = init_fn.call::<()>(());
+                        }
+                    } else {
+                        // Try loading from file
+                        let path = PathBuf::from(&game_name);
+                        if path.exists() {
+                            info!(game = %game_name, "Loading game from file");
+                            if let Ok(src) = std::fs::read_to_string(&path) {
+                                if let Err(e) = lua.load(&src).exec() {
+                                    warn!("Script error: {e}");
+                                } else if let Ok(init_fn) = lua.globals().get::<Function>("init") {
+                                    let _ = init_fn.call::<()>(());
+                                }
+                            }
+                        } else {
+                            warn!(game = %game_name, "Unknown game: not embedded and not a file");
+                        }
                     }
                 }
 

@@ -196,13 +196,13 @@ impl Renderer {
             multiview: None, cache: None,
         });
 
-        // Default sampler
+        // Default sampler — Nearest filtering for pixel-art crispness
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Default Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
@@ -366,6 +366,9 @@ impl Renderer {
 
     /// Render all queued commands and present the frame.
     pub fn render(&self) -> Result<(), RenderError> {
+                #[derive(PartialEq)]
+                enum BgKind { Default, Font, Texture(usize) }
+
         let clear = *self.clear_color.lock().unwrap();
         let frame = self.surface.get_current_texture()
             .map_err(|e| RenderError::SurfaceFailed(e.to_string()))?;
@@ -389,88 +392,112 @@ impl Renderer {
             occlusion_query_set: None,
         });
 
-        let mut vertices: Vec<SpriteVertex> = Vec::new();
-        let mut indices: Vec<u16> = Vec::new();
-        let mut tex_id_for_batch: Option<usize> = None;
-        let (sw, sh) = self.screen_size;
+        fn add_rect(x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32, sw: f32, sh: f32, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>) {
+            let x1 = (x / sw) * 2.0 - 1.0;
+            let y1 = 1.0 - (y / sh) * 2.0;
+            let x2 = ((x + w) / sw) * 2.0 - 1.0;
+            let y2 = 1.0 - ((y + h) / sh) * 2.0;
+            let base = verts.len() as u16;
+            verts.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [r, g, b, a] });
+            verts.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [r, g, b, a] });
+            verts.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [r, g, b, a] });
+            verts.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [r, g, b, a] });
+            idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
 
-        // Convert draw commands to vertices
-        let draw_cmds = self.draw_list.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for cmd in &draw_cmds {
-            match cmd {
-                DrawCmd::Rect { x, y, w, h, r, g, b, a } => {
-                    let x1 = (x / sw) * 2.0 - 1.0;
-                    let y1 = 1.0 - (y / sh) * 2.0;
-                    let x2 = ((x + w) / sw) * 2.0 - 1.0;
-                    let y2 = 1.0 - ((y + h) / sh) * 2.0;
-                    let base = vertices.len() as u16;
-                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [*r, *g, *b, *a] });
-                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [*r, *g, *b, *a] });
-                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [*r, *g, *b, *a] });
-                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [*r, *g, *b, *a] });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        fn add_sprite(tex_idx: usize, x: f32, y: f32, w: f32, h: f32, sw: f32, sh: f32, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>) {
+            let x1 = (x / sw) * 2.0 - 1.0;
+            let y1 = 1.0 - (y / sh) * 2.0;
+            let x2 = ((x + w) / sw) * 2.0 - 1.0;
+            let y2 = 1.0 - ((y + h) / sh) * 2.0;
+            let base = verts.len() as u16;
+            verts.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
+            verts.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
+            verts.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
+            verts.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
+            idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        fn add_glyph(x: f32, y: f32, w: f32, h: f32, u1: f32, v1: f32, u2: f32, v2: f32, r: f32, g: f32, b: f32, sw: f32, sh: f32, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>) {
+            let x1 = (x / sw) * 2.0 - 1.0;
+            let y1 = 1.0 - (y / sh) * 2.0;
+            let x2 = ((x + w) / sw) * 2.0 - 1.0;
+            let y2 = 1.0 - ((y + h) / sh) * 2.0;
+            let base = verts.len() as u16;
+            verts.push(SpriteVertex { position: [x1, y1], tex_coords: [u1, v1], color: [r, g, b, 1.0] });
+            verts.push(SpriteVertex { position: [x2, y1], tex_coords: [u2, v1], color: [r, g, b, 1.0] });
+            verts.push(SpriteVertex { position: [x2, y2], tex_coords: [u2, v2], color: [r, g, b, 1.0] });
+            verts.push(SpriteVertex { position: [x1, y2], tex_coords: [u1, v2], color: [r, g, b, 1.0] });
+            idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        fn set_bind_group(pass: &mut wgpu::RenderPass, renderer: &Renderer, bg: &Option<BgKind>) {
+            match bg {
+                Some(BgKind::Font) => pass.set_bind_group(0, &renderer.font_bind_group, &[]),
+                Some(BgKind::Texture(idx)) => {
+                    let groups = renderer.texture_bind_groups.lock().unwrap();
+                    if *idx < groups.len() { pass.set_bind_group(0, &groups[*idx], &[]); }
+                    else { pass.set_bind_group(0, &renderer.default_bind_group, &[]); }
                 }
-                DrawCmd::Sprite { tex_idx, x, y, w, h } => {
-                    let x1 = (x / sw) * 2.0 - 1.0;
-                    let y1 = 1.0 - (y / sh) * 2.0;
-                    let x2 = ((x + w) / sw) * 2.0 - 1.0;
-                    let y2 = 1.0 - ((y + h) / sh) * 2.0;
-                    let base = vertices.len() as u16;
-                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
-                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] });
-                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
-                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-                    tex_id_for_batch = Some(*tex_idx);
-                }
-                DrawCmd::Glyph { x, y, w, h, u1, v1, u2, v2, r, g, b } => {
-                    let x1 = (*x / sw) * 2.0 - 1.0;
-                    let y1 = 1.0 - (*y / sh) * 2.0;
-                    let x2 = ((*x + *w) / sw) * 2.0 - 1.0;
-                    let y2 = 1.0 - ((*y + *h) / sh) * 2.0;
-                    let base = vertices.len() as u16;
-                    vertices.push(SpriteVertex { position: [x1, y1], tex_coords: [*u1, *v1], color: [*r, *g, *b, 1.0] });
-                    vertices.push(SpriteVertex { position: [x2, y1], tex_coords: [*u2, *v1], color: [*r, *g, *b, 1.0] });
-                    vertices.push(SpriteVertex { position: [x2, y2], tex_coords: [*u2, *v2], color: [*r, *g, *b, 1.0] });
-                    vertices.push(SpriteVertex { position: [x1, y2], tex_coords: [*u1, *v2], color: [*r, *g, *b, 1.0] });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-                    // Glyphs use the font atlas bind group (tex_idx = special sentinel)
-                    tex_id_for_batch = Some(usize::MAX);
-                }
+                _ => pass.set_bind_group(0, &renderer.default_bind_group, &[]),
             }
         }
 
-        if !vertices.is_empty() {
-            let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite VB"),
-                contents: bytemuck::cast_slice(&vertices),
+        fn draw_batch(pass: &mut wgpu::RenderPass, renderer: &Renderer, verts: &mut Vec<SpriteVertex>, idxs: &mut Vec<u16>, bg: &Option<BgKind>) {
+            if verts.is_empty() { return; }
+            let vb = renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Batch VB"),
+                contents: bytemuck::cast_slice(verts),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-            let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite IB"),
-                contents: bytemuck::cast_slice(&indices),
+            let ib = renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Batch IB"),
+                contents: bytemuck::cast_slice(idxs),
                 usage: wgpu::BufferUsages::INDEX,
             });
-
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&renderer.pipeline);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
-
-            // Resolve bind group — usize::MAX = font atlas, otherwise texture index
-            match tex_id_for_batch {
-                Some(usize::MAX) => pass.set_bind_group(0, &self.font_bind_group, &[]),
-                Some(idx) => {
-                    let groups = self.texture_bind_groups.lock().unwrap();
-                    if idx < groups.len() {
-                        pass.set_bind_group(0, &groups[idx], &[]);
-                    } else {
-                        pass.set_bind_group(0, &self.default_bind_group, &[]);
-                    }
-                }
-                None => pass.set_bind_group(0, &self.default_bind_group, &[]),
-            }
-            pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+            set_bind_group(pass, renderer, bg);
+            pass.draw_indexed(0..idxs.len() as u32, 0, 0..1);
+            verts.clear();
+            idxs.clear();
         }
+
+        let (sw, sh) = self.screen_size;
+        let draw_cmds = self.draw_list.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let mut vertices: Vec<SpriteVertex> = Vec::new();
+        let mut indices: Vec<u16> = Vec::new();
+        let mut current_bg: Option<BgKind> = None;
+
+        for cmd in &draw_cmds {
+            let need_bg: Option<BgKind> = match cmd {
+                DrawCmd::Rect { .. } => None,
+                DrawCmd::Sprite { tex_idx, .. } => Some(BgKind::Texture(*tex_idx)),
+                DrawCmd::Glyph { .. } => Some(BgKind::Font),
+            };
+
+            // Flush on bind group change
+            if need_bg != current_bg && !vertices.is_empty() {
+                draw_batch(&mut pass, self, &mut vertices, &mut indices, &current_bg);
+            }
+            current_bg = need_bg;
+
+            match cmd {
+                DrawCmd::Rect { x, y, w, h, r, g, b, a } => {
+                    add_rect(*x, *y, *w, *h, *r, *g, *b, *a, sw, sh, &mut vertices, &mut indices);
+                }
+                DrawCmd::Sprite { tex_idx, x, y, w, h } => {
+                    add_sprite(*tex_idx, *x, *y, *w, *h, sw, sh, &mut vertices, &mut indices);
+                }
+                DrawCmd::Glyph { x, y, w, h, u1, v1, u2, v2, r, g, b } => {
+                    add_glyph(*x, *y, *w, *h, *u1, *v1, *u2, *v2, *r, *g, *b, sw, sh, &mut vertices, &mut indices);
+                }
+            }
+        }
+
+        // Flush final batch
+        draw_batch(&mut pass, self, &mut vertices, &mut indices, &current_bg);
 
         drop(pass);
         self.queue.submit(std::iter::once(encoder.finish()));

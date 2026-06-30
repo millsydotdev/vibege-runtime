@@ -278,7 +278,7 @@ impl App {
                 )
             })?;
 
-            flag::register(SIGTSTP, Arc::clone(&suspend_flag)).map_err(|e| {
+            flag::register(SIGTSTP, Arc::clone(&_suspend_flag)).map_err(|e| {
                 RuntimeError::with_cause(
                     ErrorCode::SIGNAL_HANDLER_ERROR,
                     "Failed to register SIGTSTP handler",

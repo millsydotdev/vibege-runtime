@@ -74,6 +74,10 @@ pub struct EventBus {
     subscribers: Mutex<Vec<Subscriber>>,
 }
 
+impl Default for EventBus {
+    fn default() -> Self { Self::new() }
+}
+
 impl EventBus {
     pub fn new() -> Self {
         Self {

@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use crate::config::{load_config, MergedConfig};
+use crate::config::{MergedConfig, load_config};
 use crate::error::Result;
 use crate::logging;
 use crate::metrics::MetricsRegistry;
@@ -261,26 +261,29 @@ impl App {
             use signal_hook::consts::signal::*;
             use signal_hook::flag;
 
-            flag::register(SIGTERM, Arc::clone(&shutdown_flag))
-                .map_err(|e| RuntimeError::with_cause(
+            flag::register(SIGTERM, Arc::clone(&shutdown_flag)).map_err(|e| {
+                RuntimeError::with_cause(
                     ErrorCode::SIGNAL_HANDLER_ERROR,
                     "Failed to register SIGTERM handler",
                     e,
-                ))?;
+                )
+            })?;
 
-            flag::register(SIGINT, Arc::clone(&shutdown_flag))
-                .map_err(|e| RuntimeError::with_cause(
+            flag::register(SIGINT, Arc::clone(&shutdown_flag)).map_err(|e| {
+                RuntimeError::with_cause(
                     ErrorCode::SIGNAL_HANDLER_ERROR,
                     "Failed to register SIGINT handler",
                     e,
-                ))?;
+                )
+            })?;
 
-            flag::register(SIGTSTP, Arc::clone(&suspend_flag))
-                .map_err(|e| RuntimeError::with_cause(
+            flag::register(SIGTSTP, Arc::clone(&suspend_flag)).map_err(|e| {
+                RuntimeError::with_cause(
                     ErrorCode::SIGNAL_HANDLER_ERROR,
                     "Failed to register SIGTSTP handler",
                     e,
-                ))?;
+                )
+            })?;
         }
 
         #[cfg(windows)]
@@ -288,7 +291,8 @@ impl App {
             // Windows console signal handling uses a static callback approach.
             // SetConsoleCtrlHandler requires an extern "system" fn, not a closure.
             // We use a static atomic bool that the handler sets on Ctrl+C/Ctrl+Break.
-            static CTRL_C_PRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            static CTRL_C_PRESSED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
 
             // Link the shutdown flag to the static by watching it in the main loop
             // The handler simply sets the static flag
@@ -297,9 +301,12 @@ impl App {
                 1 // TRUE = handled
             }
 
-            match unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(
-                Some(console_ctrl_handler), 1
-            ) } {
+            match unsafe {
+                windows_sys::Win32::System::Console::SetConsoleCtrlHandler(
+                    Some(console_ctrl_handler),
+                    1,
+                )
+            } {
                 0 => tracing::warn!("Failed to register console control handler"),
                 _ => tracing::debug!("Console control handler registered"),
             }
@@ -454,9 +461,7 @@ mod tests {
         let mut handler = TestHandler::new();
         let shutdown = Arc::clone(&app.shutdown_requested);
 
-        let handle = std::thread::spawn(move || {
-            app.run(&mut handler)
-        });
+        let handle = std::thread::spawn(move || app.run(&mut handler));
 
         // Let it run briefly then request shutdown via the Arc flag
         std::thread::sleep(std::time::Duration::from_millis(50));

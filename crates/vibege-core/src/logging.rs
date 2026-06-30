@@ -10,8 +10,8 @@ use crate::config::LogLevel;
 /// If a global subscriber has already been set (e.g., by a parent process or
 /// another initialisation call), this function returns immediately without error.
 pub fn init_logging(log_level: LogLevel) {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level.as_str()));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level.as_str()));
 
     let subscriber = tracing_subscriber::fmt()
         .json()

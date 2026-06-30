@@ -52,13 +52,21 @@ pub struct SceneContext {
 
 impl SceneContext {
     pub fn new(
-        width: u32, height: u32,
+        width: u32,
+        height: u32,
         renderer: Arc<vibege_renderer::Renderer>,
         input: Arc<std::sync::Mutex<vibege_input::InputManager>>,
         config: Arc<vibege_config::ConfigHandle>,
         event_bus: Option<Arc<EventBus>>,
     ) -> Self {
-        Self { screen_width: width, screen_height: height, renderer, input, config, event_bus }
+        Self {
+            screen_width: width,
+            screen_height: height,
+            renderer,
+            input,
+            config,
+            event_bus,
+        }
     }
 }
 

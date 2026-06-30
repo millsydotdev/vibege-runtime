@@ -2,8 +2,8 @@ use std::backtrace::Backtrace;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static CRASH_REPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -44,7 +44,9 @@ pub fn install_panic_hook() {
             "Unknown panic".to_string()
         };
 
-        let location = panic_info.location().map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
 
         let backtrace = Backtrace::capture();
 
@@ -58,7 +60,10 @@ pub fn install_panic_hook() {
         };
 
         // Write crash dump to file
-        let dir = CRASH_REPORT_DIR.get().cloned().unwrap_or_else(|| PathBuf::from("."));
+        let dir = CRASH_REPORT_DIR
+            .get()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("."));
         if let Err(e) = write_crash_report(&dir, &report) {
             eprintln!("[VIBEGE] Failed to write crash report: {e}");
         }
@@ -82,7 +87,10 @@ pub fn set_crash_report_dir(path: PathBuf) {
     let _ = CRASH_REPORT_DIR.set(path);
 }
 
-fn write_crash_report(dir: &PathBuf, report: &CrashReport) -> Result<(), Box<dyn std::error::Error>> {
+fn write_crash_report(
+    dir: &PathBuf,
+    report: &CrashReport,
+) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(dir)?;
 
     let timestamp = report.timestamp.replace([':', '.'], "-");

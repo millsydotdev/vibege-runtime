@@ -141,12 +141,16 @@ pub struct SuspensionEngine {
 impl SuspensionEngine {
     /// Creates a new suspension engine with the given config.
     pub fn with_config(config: SuspensionConfig) -> Result<Self> {
-        std::fs::create_dir_all(&config.snapshot_dir)
-            .map_err(|e| RuntimeError::with_cause(
+        std::fs::create_dir_all(&config.snapshot_dir).map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INIT_FAILED,
-                format!("Failed to create snapshot directory: {}", config.snapshot_dir.display()),
+                format!(
+                    "Failed to create snapshot directory: {}",
+                    config.snapshot_dir.display()
+                ),
                 e,
-            ))?;
+            )
+        })?;
 
         Ok(Self {
             config,
@@ -166,7 +170,12 @@ impl SuspensionEngine {
     /// into a structured snapshot, then persists it to disk.
     ///
     /// Performance target (v0.1): <500ms
-    pub fn suspend(&mut self, game_state: &[u8], game_time_secs: f64, label: &str) -> Result<SnapshotMeta> {
+    pub fn suspend(
+        &mut self,
+        game_state: &[u8],
+        game_time_secs: f64,
+        label: &str,
+    ) -> Result<SnapshotMeta> {
         let start = Instant::now();
 
         // Compute checksum from game state before serializing the full snapshot
@@ -183,23 +192,24 @@ impl SuspensionEngine {
         };
 
         // Serialise to JSON (in v0.1; will use MessagePack/binary in v1)
-        let serialised = serde_json::to_vec(&snapshot)
-            .map_err(|e| RuntimeError::with_cause(
-                ErrorCode::INTERNAL,
-                "Failed to serialise snapshot",
-                e,
-            ))?;
+        let serialised = serde_json::to_vec(&snapshot).map_err(|e| {
+            RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to serialise snapshot", e)
+        })?;
 
         // Write to disk
         let snapshot_id = format!("snap-{}", chrono_hash());
-        let snapshot_path = self.config.snapshot_dir.join(format!("{}.snap", snapshot_id));
+        let snapshot_path = self
+            .config
+            .snapshot_dir
+            .join(format!("{}.snap", snapshot_id));
 
-        std::fs::write(&snapshot_path, &serialised)
-            .map_err(|e| RuntimeError::with_cause(
+        std::fs::write(&snapshot_path, &serialised).map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INTERNAL,
                 format!("Failed to write snapshot: {}", snapshot_path.display()),
                 e,
-            ))?;
+            )
+        })?;
 
         // Track metadata
         let meta = SnapshotMeta {
@@ -216,7 +226,10 @@ impl SuspensionEngine {
         // Enforce snapshot limit
         while self.snapshots.len() > self.config.max_snapshots as usize {
             let removed = self.snapshots.remove(0);
-            let old_path = self.config.snapshot_dir.join(format!("{}.snap", removed.id));
+            let old_path = self
+                .config
+                .snapshot_dir
+                .join(format!("{}.snap", removed.id));
             let _ = std::fs::remove_file(&old_path);
             debug!(snapshot = %removed.id, "Removed old snapshot");
         }
@@ -227,7 +240,8 @@ impl SuspensionEngine {
         self.measurement_count_suspend += 1;
         self.stats.total_snapshots += 1;
         self.stats.last_suspend_time_ms = elapsed_ms;
-        self.stats.average_suspend_time_ms = self.total_suspend_time_ms / self.measurement_count_suspend as f64;
+        self.stats.average_suspend_time_ms =
+            self.total_suspend_time_ms / self.measurement_count_suspend as f64;
         self.stats.total_snapshot_bytes += serialised.len() as u64;
 
         info!(
@@ -249,7 +263,10 @@ impl SuspensionEngine {
     pub fn resume(&mut self, snapshot_id: &str) -> Result<Snapshot> {
         let start = Instant::now();
 
-        let snapshot_path = self.config.snapshot_dir.join(format!("{}.snap", snapshot_id));
+        let snapshot_path = self
+            .config
+            .snapshot_dir
+            .join(format!("{}.snap", snapshot_id));
         if !snapshot_path.exists() {
             return Err(RuntimeError::new(
                 ErrorCode::CONFIG_FILE_NOT_FOUND,
@@ -257,21 +274,23 @@ impl SuspensionEngine {
             ));
         }
 
-        let serialised = std::fs::read(&snapshot_path)
-            .map_err(|e| RuntimeError::with_cause(
+        let serialised = std::fs::read(&snapshot_path).map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INTERNAL,
                 format!("Failed to read snapshot: {}", snapshot_path.display()),
                 e,
-            ))?;
+            )
+        })?;
 
         // Verify checksum
         let stored_checksum = simple_hash(&serialised);
-        let snapshot: Snapshot = serde_json::from_slice(&serialised)
-            .map_err(|e| RuntimeError::with_cause(
+        let snapshot: Snapshot = serde_json::from_slice(&serialised).map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::INTERNAL,
                 "Failed to deserialise snapshot (corrupted format)",
                 e,
-            ))?;
+            )
+        })?;
 
         if snapshot.checksum != stored_checksum {
             warn!(
@@ -286,7 +305,8 @@ impl SuspensionEngine {
         self.measurement_count_resume += 1;
         self.stats.total_restores += 1;
         self.stats.last_resume_time_ms = elapsed_ms;
-        self.stats.average_resume_time_ms = self.total_resume_time_ms / self.measurement_count_resume as f64;
+        self.stats.average_resume_time_ms =
+            self.total_resume_time_ms / self.measurement_count_resume as f64;
 
         info!(
             snapshot_id = %snapshot_id,
@@ -305,14 +325,18 @@ impl SuspensionEngine {
 
     /// Deletes a snapshot by ID.
     pub fn delete_snapshot(&mut self, snapshot_id: &str) -> Result<()> {
-        let snapshot_path = self.config.snapshot_dir.join(format!("{}.snap", snapshot_id));
+        let snapshot_path = self
+            .config
+            .snapshot_dir
+            .join(format!("{}.snap", snapshot_id));
         if snapshot_path.exists() {
-            std::fs::remove_file(&snapshot_path)
-                .map_err(|e| RuntimeError::with_cause(
+            std::fs::remove_file(&snapshot_path).map_err(|e| {
+                RuntimeError::with_cause(
                     ErrorCode::INTERNAL,
                     format!("Failed to delete snapshot: {}", snapshot_path.display()),
                     e,
-                ))?;
+                )
+            })?;
         }
         self.snapshots.retain(|s| s.id != snapshot_id);
         info!(snapshot_id = %snapshot_id, "Snapshot deleted");
@@ -344,7 +368,8 @@ impl SuspensionEngine {
         if !self.config.auto_snapshot || self.config.auto_snapshot_interval_secs == 0 {
             return false;
         }
-        self.last_auto_snapshot.elapsed() >= Duration::from_secs(self.config.auto_snapshot_interval_secs)
+        self.last_auto_snapshot.elapsed()
+            >= Duration::from_secs(self.config.auto_snapshot_interval_secs)
     }
 
     /// Resets the auto-snapshot timer.
@@ -427,7 +452,9 @@ mod tests {
         let mut engine = SuspensionEngine::with_config(config).unwrap();
 
         for i in 0..5 {
-            engine.suspend(b"state", i as f64, &format!("snap_{i}")).unwrap();
+            engine
+                .suspend(b"state", i as f64, &format!("snap_{i}"))
+                .unwrap();
         }
 
         assert_eq!(engine.snapshots.len(), 3);
@@ -525,7 +552,11 @@ mod tests {
             game_time_secs: 42.0,
             game_state: vec![1, 2, 3, 4],
             asset_references: HashMap::from([("tex_player".into(), "abc123".into())]),
-            render_state: RenderState { clear_color: (0.0, 0.0, 0.0, 1.0), viewport_width: 1280, viewport_height: 720 },
+            render_state: RenderState {
+                clear_color: (0.0, 0.0, 0.0, 1.0),
+                viewport_width: 1280,
+                viewport_height: 720,
+            },
             checksum: "deadbeef".into(),
         };
 
@@ -534,6 +565,9 @@ mod tests {
 
         assert_eq!(deserialised.game_time_secs, 42.0);
         assert_eq!(deserialised.game_state, vec![1, 2, 3, 4]);
-        assert_eq!(deserialised.asset_references.get("tex_player").unwrap(), "abc123");
+        assert_eq!(
+            deserialised.asset_references.get("tex_player").unwrap(),
+            "abc123"
+        );
     }
 }

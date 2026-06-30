@@ -47,7 +47,7 @@ pub mod lifecycle;
 pub mod logging;
 pub mod metrics;
 
-pub use config::{load_config, LogLevel, MergedConfig, RuntimeConfig, WindowConfig};
+pub use config::{LogLevel, MergedConfig, RuntimeConfig, WindowConfig, load_config};
 pub use crash::install_panic_hook;
 pub use error::{ErrorCode, Result, RuntimeError};
 pub use event::{EventBus, RuntimeEvent};

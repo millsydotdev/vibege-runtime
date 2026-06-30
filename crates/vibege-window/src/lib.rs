@@ -110,25 +110,28 @@ impl WindowManager {
     /// The window configuration is taken from `RuntimeConfig`. If no custom
     /// configuration is provided, defaults are used (1280x720, "VibeGE Runtime").
     pub fn new(config: &RuntimeConfig) -> Result<Self, WindowError> {
-        let event_loop = winit::event_loop::EventLoop::new()
-            .map_err(|e: winit::error::EventLoopError| WindowError::CreationFailed(format!("Event loop: {e}")))?;
+        let event_loop =
+            winit::event_loop::EventLoop::new().map_err(|e: winit::error::EventLoopError| {
+                WindowError::CreationFailed(format!("Event loop: {e}"))
+            })?;
 
         let window_config = &config.window;
 
-        let window = event_loop.create_window(
-            winit::window::WindowAttributes::new()
-                .with_title(&window_config.title)
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    window_config.width as f64,
-                    window_config.height as f64,
-                ))
-                .with_fullscreen(if window_config.fullscreen {
-                    Some(winit::window::Fullscreen::Borderless(None))
-                } else {
-                    None
-                }),
-        )
-        .map_err(|e: winit::error::OsError| WindowError::CreationFailed(e.to_string()))?;
+        let window = event_loop
+            .create_window(
+                winit::window::WindowAttributes::new()
+                    .with_title(&window_config.title)
+                    .with_inner_size(winit::dpi::LogicalSize::new(
+                        window_config.width as f64,
+                        window_config.height as f64,
+                    ))
+                    .with_fullscreen(if window_config.fullscreen {
+                        Some(winit::window::Fullscreen::Borderless(None))
+                    } else {
+                        None
+                    }),
+            )
+            .map_err(|e: winit::error::OsError| WindowError::CreationFailed(e.to_string()))?;
 
         if window_config.vsync {
             // VSync is handled by the renderer; we just note the preference
@@ -207,18 +210,19 @@ impl WindowManager {
             WindowMode::Fullscreen => {
                 let monitor = self.window.current_monitor();
                 if let Some(monitor) = monitor {
-                    self.window.set_fullscreen(Some(
-                        winit::window::Fullscreen::Exclusive(
-                            monitor.video_modes().next()
-                                .ok_or_else(|| WindowError::FullscreenFailed("No video modes available".into()))?
-                        ),
-                    ));
+                    self.window
+                        .set_fullscreen(Some(winit::window::Fullscreen::Exclusive(
+                            monitor.video_modes().next().ok_or_else(|| {
+                                WindowError::FullscreenFailed("No video modes available".into())
+                            })?,
+                        )));
                 }
             }
             WindowMode::BorderlessFullscreen => {
-                self.window.set_fullscreen(Some(
-                    winit::window::Fullscreen::Borderless(self.window.current_monitor()),
-                ));
+                self.window
+                    .set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                        self.window.current_monitor(),
+                    )));
             }
             WindowMode::Minimized => {
                 self.window.set_minimized(true);
@@ -248,7 +252,8 @@ impl WindowManager {
 
     /// Requests the window to close.
     pub fn request_close(&self) {
-        self.request_shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.request_shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Runs the event loop, blocking until the window is closed.
@@ -261,23 +266,28 @@ impl WindowManager {
         let shutdown = Arc::clone(&self.request_shutdown);
         let mut handler = self.event_handler.take();
 
-        let event_loop = self.event_loop.take()
+        let event_loop = self
+            .event_loop
+            .take()
             .ok_or_else(|| WindowError::EventLoopError("Event loop already consumed".into()))?;
 
-        event_loop.run(move |event, elwt| {
-            if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                info!("Window shutdown requested");
-                elwt.exit();
-                return;
-            }
+        event_loop
+            .run(move |event, elwt| {
+                if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    info!("Window shutdown requested");
+                    elwt.exit();
+                    return;
+                }
 
-            // Notify event handler if set
-            if let Some(ref mut h) = handler {
-                match &event {
-                    winit::event::Event::WindowEvent { event, .. } => {
-                        match event {
+                // Notify event handler if set
+                if let Some(ref mut h) = handler {
+                    match &event {
+                        winit::event::Event::WindowEvent { event, .. } => match event {
                             winit::event::WindowEvent::Resized(size) => {
-                                h.on_window_event(&WindowEvent::Resized { width: size.width, height: size.height });
+                                h.on_window_event(&WindowEvent::Resized {
+                                    width: size.width,
+                                    height: size.height,
+                                });
                             }
                             winit::event::WindowEvent::Focused(true) => {
                                 h.on_window_event(&WindowEvent::Focused);
@@ -286,15 +296,13 @@ impl WindowManager {
                                 h.on_window_event(&WindowEvent::Blurred);
                             }
                             _ => {}
-                        }
+                        },
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
 
-            match event {
-                winit::event::Event::WindowEvent { event, .. } => {
-                    match event {
+                match event {
+                    winit::event::Event::WindowEvent { event, .. } => match event {
                         winit::event::WindowEvent::CloseRequested => {
                             info!("Window close requested");
                             elwt.exit();
@@ -310,15 +318,14 @@ impl WindowManager {
                             debug!(focused = focused, "Window focus changed");
                         }
                         _ => {}
+                    },
+                    winit::event::Event::AboutToWait => {
+                        window.request_redraw();
                     }
+                    _ => {}
                 }
-                winit::event::Event::AboutToWait => {
-                    window.request_redraw();
-                }
-                _ => {}
-            }
-        })
-        .map_err(|e| WindowError::EventLoopError(e.to_string()))
+            })
+            .map_err(|e| WindowError::EventLoopError(e.to_string()))
     }
 }
 

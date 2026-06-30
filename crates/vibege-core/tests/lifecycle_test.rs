@@ -9,11 +9,17 @@ struct RecordingHandler {
 
 impl RecordingHandler {
     fn new(calls: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { calls, fail_on: None }
+        Self {
+            calls,
+            fail_on: None,
+        }
     }
 
     fn with_failure(calls: Arc<Mutex<Vec<String>>>, fail_on: &'static str) -> Self {
-        Self { calls, fail_on: Some(fail_on) }
+        Self {
+            calls,
+            fail_on: Some(fail_on),
+        }
     }
 
     fn record(&self, name: &str) -> Result<()> {
@@ -33,11 +39,21 @@ impl LifecycleHandler for RecordingHandler {
     fn on_init(&mut self, _config: &MergedConfig) -> Result<()> {
         self.record("on_init")
     }
-    fn on_update(&mut self, _dt: f64) -> Result<()> { self.record("on_update") }
-    fn on_render(&mut self, _alpha: f64) -> Result<()> { self.record("on_render") }
-    fn on_suspend(&mut self) -> Result<()> { self.record("on_suspend") }
-    fn on_resume(&mut self) -> Result<()> { self.record("on_resume") }
-    fn on_shutdown(&mut self) -> Result<()> { self.record("on_shutdown") }
+    fn on_update(&mut self, _dt: f64) -> Result<()> {
+        self.record("on_update")
+    }
+    fn on_render(&mut self, _alpha: f64) -> Result<()> {
+        self.record("on_render")
+    }
+    fn on_suspend(&mut self) -> Result<()> {
+        self.record("on_suspend")
+    }
+    fn on_resume(&mut self) -> Result<()> {
+        self.record("on_resume")
+    }
+    fn on_shutdown(&mut self) -> Result<()> {
+        self.record("on_shutdown")
+    }
 }
 
 #[test]
@@ -85,8 +101,14 @@ fn test_init_failure_propagates() {
 
 #[test]
 fn test_error_code_categories() {
-    assert_eq!(vibege_core::ErrorCode::CONFIG_FILE_NOT_FOUND.category(), "configuration");
-    assert_eq!(vibege_core::ErrorCode::INIT_FAILED.category(), "initialisation");
+    assert_eq!(
+        vibege_core::ErrorCode::CONFIG_FILE_NOT_FOUND.category(),
+        "configuration"
+    );
+    assert_eq!(
+        vibege_core::ErrorCode::INIT_FAILED.category(),
+        "initialisation"
+    );
     assert_eq!(vibege_core::ErrorCode::PANIC.category(), "internal");
 }
 
@@ -106,6 +128,7 @@ fn test_error_at_location() {
     let err = vibege_core::RuntimeError::new(
         vibege_core::ErrorCode::INIT_FAILED,
         "Window creation failed",
-    ).at("src/window.rs:42");
+    )
+    .at("src/window.rs:42");
     assert!(format!("{err}").contains("src/window.rs:42"));
 }

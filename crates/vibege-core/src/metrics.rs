@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// A snapshot of all metrics at a point in time.
@@ -69,7 +69,12 @@ impl MetricsRegistry {
     pub fn record_memory(&self, current_kb: u64) {
         let mut peak = self.peak_memory_kb.load(Ordering::Relaxed);
         while current_kb > peak {
-            match self.peak_memory_kb.compare_exchange_weak(peak, current_kb, Ordering::Relaxed, Ordering::Relaxed) {
+            match self.peak_memory_kb.compare_exchange_weak(
+                peak,
+                current_kb,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => break,
                 Err(p) => peak = p,
             }
@@ -85,7 +90,11 @@ impl MetricsRegistry {
         let last_frame_ms = self.last_frame_time_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0;
 
         // Compute FPS from last frame time (avoids race conditions with accumulators)
-        let fps = if last_frame_ms > 0.0 { 1000.0 / last_frame_ms } else { 0.0 };
+        let fps = if last_frame_ms > 0.0 {
+            1000.0 / last_frame_ms
+        } else {
+            0.0
+        };
 
         MetricsSnapshot {
             uptime_secs: uptime.as_secs_f64(),
@@ -103,7 +112,6 @@ impl MetricsRegistry {
     pub fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
-
 }
 
 #[cfg(test)]

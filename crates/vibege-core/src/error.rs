@@ -97,7 +97,13 @@ impl RuntimeError {
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {} (code: {})", self.code.category(), self.message, self.code)?;
+        write!(
+            f,
+            "[{}] {} (code: {})",
+            self.code.category(),
+            self.message,
+            self.code
+        )?;
         if let Some(loc) = &self.source_location {
             write!(f, " at {}", loc)?;
         }
@@ -113,13 +119,21 @@ impl From<std::io::Error> for RuntimeError {
 
 impl From<toml::de::Error> for RuntimeError {
     fn from(err: toml::de::Error) -> Self {
-        Self::with_cause(ErrorCode::CONFIG_PARSE_ERROR, "Failed to parse configuration file", err)
+        Self::with_cause(
+            ErrorCode::CONFIG_PARSE_ERROR,
+            "Failed to parse configuration file",
+            err,
+        )
     }
 }
 
 impl From<serde_json::Error> for RuntimeError {
     fn from(err: serde_json::Error) -> Self {
-        Self::with_cause(ErrorCode::CONFIG_PARSE_ERROR, "Failed to parse JSON configuration", err)
+        Self::with_cause(
+            ErrorCode::CONFIG_PARSE_ERROR,
+            "Failed to parse JSON configuration",
+            err,
+        )
     }
 }
 

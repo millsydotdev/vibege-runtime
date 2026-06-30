@@ -1,11 +1,11 @@
+use super::game_manager::GameSession;
+use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::info;
 use vibege_audio::AudioSystem;
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
-use crate::scene::{Scene, SceneId, SceneContext, SceneAction, SceneResult};
-use super::game_manager::GameSession;
 
 pub struct GameScene {
     session: Option<GameSession>,
@@ -22,17 +22,32 @@ impl GameScene {
         input: Arc<Mutex<InputManager>>,
         audio: Option<Arc<AudioSystem>>,
     ) -> Self {
-        Self { session: None, game_source: source, renderer, input, audio }
+        Self {
+            session: None,
+            game_source: source,
+            renderer,
+            input,
+            audio,
+        }
     }
 }
 
 impl Scene for GameScene {
-    fn id(&self) -> SceneId { SceneId::Game }
+    fn id(&self) -> SceneId {
+        SceneId::Game
+    }
 
     fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
         info!("GameScene: creating game session");
         let event_bus = ctx.event_bus.clone();
-        match GameSession::load("game", &self.game_source, &self.renderer, &self.input, &self.audio, event_bus) {
+        match GameSession::load(
+            "game",
+            &self.game_source,
+            &self.renderer,
+            &self.input,
+            &self.audio,
+            event_bus,
+        ) {
             Ok(session) => {
                 self.session = Some(session);
                 Ok(SceneAction::Continue)

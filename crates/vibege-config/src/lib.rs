@@ -42,14 +42,30 @@ pub struct VibegeConfig {
     pub general: GeneralConfig,
 }
 
-fn str_ctrl_shift() -> String { "ctrl+shift".into() }
-fn str_v() -> String { "v".into() }
-fn str_center() -> String { "center".into() }
-fn u800() -> u32 { 800 }
-fn u600() -> u32 { 600 }
-fn f07() -> f32 { 0.7 }
-fn str_hidden() -> String { "hidden".into() }
-fn str_balanced() -> String { "balanced".into() }
+fn str_ctrl_shift() -> String {
+    "ctrl+shift".into()
+}
+fn str_v() -> String {
+    "v".into()
+}
+fn str_center() -> String {
+    "center".into()
+}
+fn u800() -> u32 {
+    800
+}
+fn u600() -> u32 {
+    600
+}
+fn f07() -> f32 {
+    0.7
+}
+fn str_hidden() -> String {
+    "hidden".into()
+}
+fn str_balanced() -> String {
+    "balanced".into()
+}
 
 impl Default for VibegeConfig {
     fn default() -> Self {
@@ -115,7 +131,9 @@ pub struct ConfigHandle {
 
 impl ConfigHandle {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(load_config()) }
+        Self {
+            inner: Mutex::new(load_config()),
+        }
     }
 
     pub fn get(&self) -> VibegeConfig {

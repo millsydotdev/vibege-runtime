@@ -1,6 +1,6 @@
+use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use std::path::PathBuf;
 use tracing::info;
-use crate::scene::{Scene, SceneId, SceneContext, SceneAction, SceneResult};
 
 /// A game entry from the library or demo list.
 struct GameEntry {
@@ -15,7 +15,13 @@ struct GameEntry {
 
 impl GameEntry {
     fn demo(name: &str, desc: &str, author: &str) -> Self {
-        Self { name: name.into(), desc: desc.into(), author: author.into(), status: "live".into(), path: "demo".into() }
+        Self {
+            name: name.into(),
+            desc: desc.into(),
+            author: author.into(),
+            status: "live".into(),
+            path: "demo".into(),
+        }
     }
 }
 
@@ -29,40 +35,70 @@ pub struct HomeScene {
 
 impl HomeScene {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), selection: 0, has_scanned: false }
+        Self {
+            entries: Vec::new(),
+            selection: 0,
+            has_scanned: false,
+        }
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
         ctx.renderer.set_clear(0.05, 0.05, 0.15, 1.0);
     }
 
-    fn rect(&self, ctx: &mut SceneContext, x: f32, y: f32, w: f32, h: f32, r: f32, g: f32, b: f32, a: f32) {
+    fn rect(
+        &self,
+        ctx: &mut SceneContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) {
         ctx.renderer.draw_rect(x, y, w, h, r, g, b, a);
     }
 
-    fn text(&self, ctx: &mut SceneContext, x: f32, y: f32, s: &str, sz: f32, r: f32, g: f32, b: f32) {
+    fn text(
+        &self,
+        ctx: &mut SceneContext,
+        x: f32,
+        y: f32,
+        s: &str,
+        sz: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+    ) {
         ctx.renderer.draw_text(x, y, s, sz, r, g, b);
     }
 
-    fn input_down(&self, ctx: &SceneContext, key: &str) -> bool {
-        ctx.input.lock().unwrap().is_key_down(vibege_input::key_name_to_code(key))
-    }
-
     fn input_pressed(&self, ctx: &SceneContext, key: &str) -> bool {
-        ctx.input.lock().unwrap().is_key_pressed(vibege_input::key_name_to_code(key))
+        ctx.input
+            .lock()
+            .unwrap()
+            .is_key_pressed(vibege_input::key_name_to_code(key))
     }
 
     fn scan_installed_games(&mut self) {
-        if self.has_scanned { return; }
+        if self.has_scanned {
+            return;
+        }
         self.has_scanned = true;
 
         let dir = vibege_config::installed_games_dir();
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if !path.is_dir() { continue; }
+                if !path.is_dir() {
+                    continue;
+                }
                 let meta_path = path.join(".vibege-install.json");
-                if !meta_path.exists() { continue; }
+                if !meta_path.exists() {
+                    continue;
+                }
                 if let Ok(content) = std::fs::read_to_string(&meta_path) {
                     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
                         let name = meta["name"].as_str().unwrap_or("").to_string();
@@ -83,8 +119,13 @@ impl HomeScene {
 
         // Add demo entries if none found
         if self.entries.is_empty() {
-            self.entries.push(GameEntry::demo("Pong", "Classic paddle arcade", "VibeGE"));
-            self.entries.push(GameEntry::demo("Void Drifter", "Space exploration", "VibeGE Labs"));
+            self.entries
+                .push(GameEntry::demo("Pong", "Classic paddle arcade", "VibeGE"));
+            self.entries.push(GameEntry::demo(
+                "Void Drifter",
+                "Space exploration",
+                "VibeGE Labs",
+            ));
         }
     }
 
@@ -94,7 +135,10 @@ impl HomeScene {
 
         if game.path == "demo" {
             // Load embedded demo game
-            let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/demo-game.lua"));
+            let source = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../resources/demo-game.lua"
+            ));
             let game_scene = Box::new(super::game_scene::GameScene::new(
                 source.to_string(),
                 ctx.renderer.clone(),
@@ -110,7 +154,10 @@ impl HomeScene {
             match std::fs::read_to_string(&path) {
                 Ok(source) => {
                     let game_scene = Box::new(super::game_scene::GameScene::new(
-                        source, ctx.renderer.clone(), ctx.input.clone(), None,
+                        source,
+                        ctx.renderer.clone(),
+                        ctx.input.clone(),
+                        None,
                     ));
                     Ok(SceneAction::Push(game_scene))
                 }
@@ -125,7 +172,15 @@ impl HomeScene {
         }
     }
 
-    fn draw_card(&self, ctx: &mut SceneContext, x: f32, y: f32, w: f32, game: &GameEntry, selected: bool) {
+    fn draw_card(
+        &self,
+        ctx: &mut SceneContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        game: &GameEntry,
+        selected: bool,
+    ) {
         let card_h = 72.0;
         // Card background
         if selected {
@@ -156,7 +211,9 @@ impl HomeScene {
 }
 
 impl Scene for HomeScene {
-    fn id(&self) -> SceneId { SceneId::Home }
+    fn id(&self) -> SceneId {
+        SceneId::Home
+    }
 
     fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
         info!("HomeScene: started");
@@ -190,14 +247,40 @@ impl Scene for HomeScene {
 
         // Title header
         self.rect(ctx, margin, 0.0, list_w, 44.0, 0.48, 0.23, 0.93, 1.0);
-        self.text(ctx, margin + 12.0, 12.0, "VibeGE Game Store", 14.0, 1.0, 1.0, 1.0);
-        self.text(ctx, margin + list_w - 130.0, 16.0, "AI-Friendly Overlay", 7.0, 1.0, 1.0, 1.0);
+        self.text(
+            ctx,
+            margin + 12.0,
+            12.0,
+            "VibeGE Game Store",
+            14.0,
+            1.0,
+            1.0,
+            1.0,
+        );
+        self.text(
+            ctx,
+            margin + list_w - 130.0,
+            16.0,
+            "AI-Friendly Overlay",
+            7.0,
+            1.0,
+            1.0,
+            1.0,
+        );
         y += 52.0;
 
         // Instruction bar
         self.rect(ctx, margin, y, list_w, 18.0, 0.10, 0.10, 0.22, 0.7);
-        self.text(ctx, margin + 8.0, y + 3.0,
-            "Arrows: Navigate     Enter: Launch     Esc: Home", 7.0, 0.5, 0.5, 0.6);
+        self.text(
+            ctx,
+            margin + 8.0,
+            y + 3.0,
+            "Arrows: Navigate     Enter: Launch     Esc: Home",
+            7.0,
+            0.5,
+            0.5,
+            0.6,
+        );
         y += 26.0;
 
         // Game cards
@@ -208,7 +291,16 @@ impl Scene for HomeScene {
 
         // Bottom bar
         self.rect(ctx, margin, 578.0, list_w, 18.0, 0.10, 0.10, 0.22, 0.5);
-        self.text(ctx, margin + 8.0, 580.0, "vibege-runtime v0.1.0", 7.0, 0.5, 0.5, 0.6);
+        self.text(
+            ctx,
+            margin + 8.0,
+            580.0,
+            "vibege-runtime v0.1.0",
+            7.0,
+            0.5,
+            0.5,
+            0.6,
+        );
 
         Ok(SceneAction::Continue)
     }

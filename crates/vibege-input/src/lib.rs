@@ -36,20 +36,33 @@ impl From<winit::event::MouseButton> for MouseButton {
 /// Represents a gamepad button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GamepadButton {
-    South, North, East, West,
-    LeftTrigger, RightTrigger,
-    LeftShoulder, RightShoulder,
-    Select, Start,
-    LeftStick, RightStick,
-    DPadUp, DPadDown, DPadLeft, DPadRight,
+    South,
+    North,
+    East,
+    West,
+    LeftTrigger,
+    RightTrigger,
+    LeftShoulder,
+    RightShoulder,
+    Select,
+    Start,
+    LeftStick,
+    RightStick,
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
 }
 
 /// Represents a gamepad axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GamepadAxis {
-    LeftStickX, LeftStickY,
-    RightStickX, RightStickY,
-    LeftTrigger, RightTrigger,
+    LeftStickX,
+    LeftStickY,
+    RightStickX,
+    RightStickY,
+    LeftTrigger,
+    RightTrigger,
 }
 
 /// Current state of a single key or button.
@@ -101,13 +114,22 @@ impl InputManager {
 
     /// Returns the state of a specific key.
     pub fn key_state(&self, key: KeyCode) -> ButtonState {
-        self.keyboard.key_states.get(&key).copied().unwrap_or(ButtonState::Idle)
+        self.keyboard
+            .key_states
+            .get(&key)
+            .copied()
+            .unwrap_or(ButtonState::Idle)
     }
 
     /// Returns an iterator over all currently pressed keys.
     pub fn pressed_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
-        self.keyboard.key_states.iter()
-            .filter_map(|(&k, &s)| if s == ButtonState::Pressed || s == ButtonState::Held { Some(k) } else { None })
+        self.keyboard.key_states.iter().filter_map(|(&k, &s)| {
+            if s == ButtonState::Pressed || s == ButtonState::Held {
+                Some(k)
+            } else {
+                None
+            }
+        })
     }
 
     // ─── Mouse API ───────────────────────────────────────────────────
@@ -172,17 +194,24 @@ impl InputManager {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     match event.state {
                         winit::event::ElementState::Pressed => {
-                            self.keyboard.key_states.insert(keycode, ButtonState::Pressed);
+                            self.keyboard
+                                .key_states
+                                .insert(keycode, ButtonState::Pressed);
                         }
                         winit::event::ElementState::Released => {
-                            self.keyboard.key_states.insert(keycode, ButtonState::Released);
+                            self.keyboard
+                                .key_states
+                                .insert(keycode, ButtonState::Released);
                         }
                     }
                 }
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
                 let new_pos = (position.x, position.y);
-                self.mouse.delta = (new_pos.0 - self.mouse.position.0, new_pos.1 - self.mouse.position.1);
+                self.mouse.delta = (
+                    new_pos.0 - self.mouse.position.0,
+                    new_pos.1 - self.mouse.position.1,
+                );
                 self.mouse.position = new_pos;
             }
             winit::event::WindowEvent::MouseInput { button, state, .. } => {
@@ -196,18 +225,16 @@ impl InputManager {
                     }
                 }
             }
-            winit::event::WindowEvent::MouseWheel { delta, .. } => {
-                match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        self.mouse.scroll_delta.0 += *x as f64;
-                        self.mouse.scroll_delta.1 += *y as f64;
-                    }
-                    MouseScrollDelta::PixelDelta(pos) => {
-                        self.mouse.scroll_delta.0 += pos.x;
-                        self.mouse.scroll_delta.1 += pos.y;
-                    }
+            winit::event::WindowEvent::MouseWheel { delta, .. } => match delta {
+                MouseScrollDelta::LineDelta(x, y) => {
+                    self.mouse.scroll_delta.0 += *x as f64;
+                    self.mouse.scroll_delta.1 += *y as f64;
                 }
-            }
+                MouseScrollDelta::PixelDelta(pos) => {
+                    self.mouse.scroll_delta.0 += pos.x;
+                    self.mouse.scroll_delta.1 += pos.y;
+                }
+            },
             _ => {}
         }
     }
@@ -221,10 +248,14 @@ impl InputManager {
                     let gp_btn = raw_button_to_gamepad(b);
                     match state {
                         winit::event::ElementState::Pressed => {
-                            self.gamepad.button_states.insert(gp_btn, ButtonState::Pressed);
+                            self.gamepad
+                                .button_states
+                                .insert(gp_btn, ButtonState::Pressed);
                         }
                         winit::event::ElementState::Released => {
-                            self.gamepad.button_states.insert(gp_btn, ButtonState::Released);
+                            self.gamepad
+                                .button_states
+                                .insert(gp_btn, ButtonState::Released);
                         }
                     }
                     self.gamepad.connected = true;
@@ -293,7 +324,9 @@ struct KeyboardState {
 
 impl KeyboardState {
     fn new() -> Self {
-        Self { key_states: std::collections::HashMap::new() }
+        Self {
+            key_states: std::collections::HashMap::new(),
+        }
     }
 }
 
@@ -358,20 +391,71 @@ fn raw_button_to_gamepad(button: u16) -> GamepadButton {
 pub fn key_name_to_code(name: &str) -> KeyCode {
     use KeyCode::*;
     match name.to_lowercase().as_str() {
-        "a" => KeyA, "b" => KeyB, "c" => KeyC, "d" => KeyD, "e" => KeyE, "f" => KeyF,
-        "g" => KeyG, "h" => KeyH, "i" => KeyI, "j" => KeyJ, "k" => KeyK, "l" => KeyL,
-        "m" => KeyM, "n" => KeyN, "o" => KeyO, "p" => KeyP, "q" => KeyQ, "r" => KeyR,
-        "s" => KeyS, "t" => KeyT, "u" => KeyU, "v" => KeyV, "w" => KeyW, "x" => KeyX,
-        "y" => KeyY, "z" => KeyZ,
-        "0" => Digit0, "1" => Digit1, "2" => Digit2, "3" => Digit3, "4" => Digit4,
-        "5" => Digit5, "6" => Digit6, "7" => Digit7, "8" => Digit8, "9" => Digit9,
-        "f1" => F1, "f2" => F2, "f3" => F3, "f4" => F4, "f5" => F5, "f6" => F6,
-        "f7" => F7, "f8" => F8, "f9" => F9, "f10" => F10, "f11" => F11, "f12" => F12,
-        "up" => ArrowUp, "down" => ArrowDown, "left" => ArrowLeft, "right" => ArrowRight,
-        "shift" => ShiftLeft, "ctrl" | "control" => ControlLeft, "alt" => AltLeft,
-        "tab" => Tab, "space" => Space, "enter" | "return" => Enter,
-        "escape" | "esc" => Escape, "backspace" => Backspace, "delete" => Delete,
-        "home" => Home, "end" => End, "pageup" => PageUp, "pagedown" => PageDown,
+        "a" => KeyA,
+        "b" => KeyB,
+        "c" => KeyC,
+        "d" => KeyD,
+        "e" => KeyE,
+        "f" => KeyF,
+        "g" => KeyG,
+        "h" => KeyH,
+        "i" => KeyI,
+        "j" => KeyJ,
+        "k" => KeyK,
+        "l" => KeyL,
+        "m" => KeyM,
+        "n" => KeyN,
+        "o" => KeyO,
+        "p" => KeyP,
+        "q" => KeyQ,
+        "r" => KeyR,
+        "s" => KeyS,
+        "t" => KeyT,
+        "u" => KeyU,
+        "v" => KeyV,
+        "w" => KeyW,
+        "x" => KeyX,
+        "y" => KeyY,
+        "z" => KeyZ,
+        "0" => Digit0,
+        "1" => Digit1,
+        "2" => Digit2,
+        "3" => Digit3,
+        "4" => Digit4,
+        "5" => Digit5,
+        "6" => Digit6,
+        "7" => Digit7,
+        "8" => Digit8,
+        "9" => Digit9,
+        "f1" => F1,
+        "f2" => F2,
+        "f3" => F3,
+        "f4" => F4,
+        "f5" => F5,
+        "f6" => F6,
+        "f7" => F7,
+        "f8" => F8,
+        "f9" => F9,
+        "f10" => F10,
+        "f11" => F11,
+        "f12" => F12,
+        "up" => ArrowUp,
+        "down" => ArrowDown,
+        "left" => ArrowLeft,
+        "right" => ArrowRight,
+        "shift" => ShiftLeft,
+        "ctrl" | "control" => ControlLeft,
+        "alt" => AltLeft,
+        "tab" => Tab,
+        "space" => Space,
+        "enter" | "return" => Enter,
+        "escape" | "esc" => Escape,
+        "backspace" => Backspace,
+        "delete" => Delete,
+        "home" => Home,
+        "end" => End,
+        "pageup" => PageUp,
+        "pagedown" => PageDown,
         _ => Space,
     }
 }
@@ -379,7 +463,7 @@ pub fn key_name_to_code(name: &str) -> KeyCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-use winit::keyboard::{KeyCode, PhysicalKey};
+    use winit::keyboard::{KeyCode, PhysicalKey};
 
     #[test]
     fn test_input_manager_creation() {
@@ -394,7 +478,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
         assert!(!im.is_key_down(KeyCode::Space));
 
         // Simulate a key press via winit event
-        im.keyboard.key_states.insert(KeyCode::Space, ButtonState::Pressed);
+        im.keyboard
+            .key_states
+            .insert(KeyCode::Space, ButtonState::Pressed);
         assert!(im.is_key_pressed(KeyCode::Space));
         assert!(im.is_key_down(KeyCode::Space));
 
@@ -403,7 +489,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
         assert!(im.is_key_down(KeyCode::Space));
 
         // Release
-        im.keyboard.key_states.insert(KeyCode::Space, ButtonState::Released);
+        im.keyboard
+            .key_states
+            .insert(KeyCode::Space, ButtonState::Released);
         assert!(im.is_key_released(KeyCode::Space));
         assert!(!im.is_key_down(KeyCode::Space));
 
@@ -434,7 +522,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
         let mut im = InputManager::new();
         assert!(!im.is_mouse_button_down(MouseButton::Left));
 
-        im.mouse.button_states.insert(MouseButton::Left, ButtonState::Pressed);
+        im.mouse
+            .button_states
+            .insert(MouseButton::Left, ButtonState::Pressed);
         assert!(im.is_mouse_button_pressed(MouseButton::Left));
         assert!(im.is_mouse_button_down(MouseButton::Left));
 
@@ -468,7 +558,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
         let mut im = InputManager::new();
         assert!(!im.is_gamepad_button_down(GamepadButton::South));
 
-        im.gamepad.button_states.insert(GamepadButton::South, ButtonState::Pressed);
+        im.gamepad
+            .button_states
+            .insert(GamepadButton::South, ButtonState::Pressed);
         assert!(im.is_gamepad_button_pressed(GamepadButton::South));
 
         im.end_frame();
@@ -497,8 +589,12 @@ use winit::keyboard::{KeyCode, PhysicalKey};
     #[test]
     fn test_pressed_keys_iterator() {
         let mut im = InputManager::new();
-        im.keyboard.key_states.insert(KeyCode::Space, ButtonState::Pressed);
-        im.keyboard.key_states.insert(KeyCode::KeyW, ButtonState::Held);
+        im.keyboard
+            .key_states
+            .insert(KeyCode::Space, ButtonState::Pressed);
+        im.keyboard
+            .key_states
+            .insert(KeyCode::KeyW, ButtonState::Held);
 
         let pressed: Vec<KeyCode> = im.pressed_keys().collect();
         assert!(pressed.contains(&KeyCode::Space));
@@ -508,8 +604,12 @@ use winit::keyboard::{KeyCode, PhysicalKey};
     #[test]
     fn test_end_frame_clears_states() {
         let mut im = InputManager::new();
-        im.keyboard.key_states.insert(KeyCode::KeyA, ButtonState::Pressed);
-        im.mouse.button_states.insert(MouseButton::Left, ButtonState::Pressed);
+        im.keyboard
+            .key_states
+            .insert(KeyCode::KeyA, ButtonState::Pressed);
+        im.mouse
+            .button_states
+            .insert(MouseButton::Left, ButtonState::Pressed);
         im.mouse.delta = (5.0, 3.0);
         im.mouse.scroll_delta = (0.0, -1.0);
 

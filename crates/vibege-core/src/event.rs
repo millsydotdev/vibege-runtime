@@ -76,12 +76,15 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        Self { subscribers: Mutex::new(Vec::new()) }
+        Self {
+            subscribers: Mutex::new(Vec::new()),
+        }
     }
 
     /// Register a subscriber. The closure will be called for every event.
     pub fn subscribe<F>(&self, f: F)
-    where F: Fn(&RuntimeEvent) + Send + Sync + 'static,
+    where
+        F: Fn(&RuntimeEvent) + Send + Sync + 'static,
     {
         self.subscribers.lock().unwrap().push(Box::new(f));
     }
@@ -98,15 +101,18 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_event_bus_subscribe_and_publish() {
         let bus = EventBus::new();
-        let count = AtomicUsize::new(0);
+        let count = std::sync::Arc::new(AtomicUsize::new(0));
 
-        bus.subscribe(move |_| { count.fetch_add(1, Ordering::SeqCst); });
-        bus.subscribe(move |_| { count.fetch_add(1, Ordering::SeqCst); });
+        let c1 = Arc::clone(&count);
+        bus.subscribe(move |_| { c1.fetch_add(1, Ordering::SeqCst); });
+        let c2 = Arc::clone(&count);
+        bus.subscribe(move |_| { c2.fetch_add(1, Ordering::SeqCst); });
 
         bus.publish(&RuntimeEvent::HotkeyPressed);
         bus.publish(&RuntimeEvent::SettingsChanged { key: "volume".into() });
@@ -116,7 +122,9 @@ mod tests {
 
     #[test]
     fn test_event_cloning() {
-        let e = RuntimeEvent::GameStarted { name: "pong".into() };
+        let e = RuntimeEvent::GameStarted {
+            name: "pong".into(),
+        };
         let cloned = e.clone();
         match cloned {
             RuntimeEvent::GameStarted { name } => assert_eq!(name, "pong"),

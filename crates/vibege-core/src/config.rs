@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use clap::Parser;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 use crate::error::{ErrorCode, Result, RuntimeError};
 
@@ -40,7 +40,9 @@ impl std::str::FromStr for LogLevel {
             "error" => Ok(Self::Error),
             _ => Err(RuntimeError::new(
                 ErrorCode::CONFIG_INVALID_VALUE,
-                format!("Invalid log level: '{s}'. Expected one of: trace, debug, info, warn, error"),
+                format!(
+                    "Invalid log level: '{s}'. Expected one of: trace, debug, info, warn, error"
+                ),
             )),
         }
     }
@@ -82,10 +84,18 @@ impl Default for WindowConfig {
     }
 }
 
-fn default_window_title() -> String { "VibeGE Runtime".to_string() }
-const fn default_window_width() -> u32 { 1280 }
-const fn default_window_height() -> u32 { 720 }
-const fn default_vsync() -> bool { true }
+fn default_window_title() -> String {
+    "VibeGE Runtime".to_string()
+}
+const fn default_window_width() -> u32 {
+    1280
+}
+const fn default_window_height() -> u32 {
+    720
+}
+const fn default_vsync() -> bool {
+    true
+}
 
 /// Complete runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -110,7 +120,9 @@ pub struct RuntimeConfig {
     pub window: WindowConfig,
 }
 
-const fn default_fps_limit() -> u32 { 0 }
+const fn default_fps_limit() -> u32 {
+    0
+}
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
@@ -171,12 +183,13 @@ pub fn load_config() -> Result<MergedConfig> {
 
     // 1. Load from configuration file (lowest priority source)
     if let Some(cfg_path) = &cli.config {
-        let content = std::fs::read_to_string(cfg_path)
-            .map_err(|e| RuntimeError::with_cause(
+        let content = std::fs::read_to_string(cfg_path).map_err(|e| {
+            RuntimeError::with_cause(
                 ErrorCode::CONFIG_FILE_NOT_FOUND,
                 format!("Failed to read config file: {}", cfg_path.display()),
                 e,
-            ))?;
+            )
+        })?;
         let file_config: RuntimeConfig = toml::from_str(&content)?;
         config = merge_config(config, file_config);
         config_file_path = Some(cfg_path.clone());
@@ -184,12 +197,13 @@ pub fn load_config() -> Result<MergedConfig> {
         // Try default config file paths
         for path in &[PathBuf::from("vibege.toml"), get_default_config_path()] {
             if path.exists() {
-                let content = std::fs::read_to_string(path)
-                    .map_err(|e| RuntimeError::with_cause(
+                let content = std::fs::read_to_string(path).map_err(|e| {
+                    RuntimeError::with_cause(
                         ErrorCode::CONFIG_FILE_NOT_FOUND,
                         format!("Failed to read config file: {}", path.display()),
                         e,
-                    ))?;
+                    )
+                })?;
                 let file_config: RuntimeConfig = toml::from_str(&content)?;
                 config = merge_config(config, file_config);
                 config_file_path = Some(path.clone());
@@ -294,10 +308,14 @@ height = 1080
     fn test_config_from_file() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("vibege.toml");
-        fs::write(&config_path, r#"
+        fs::write(
+            &config_path,
+            r#"
 log_level = "warn"
 fps_limit = 60
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         // Override config path via CLI (simulated)
         let content = fs::read_to_string(&config_path).unwrap();

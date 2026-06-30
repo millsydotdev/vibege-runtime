@@ -28,7 +28,10 @@ impl SceneManager {
             SceneAction::Push(s) => self.push(s, ctx),
             SceneAction::Pop => self.pop(ctx),
             SceneAction::PopToRoot(s) => self.pop_to_root(s, ctx),
-            SceneAction::Exit => { self.stack.pop(); Ok(SceneAction::Exit) }
+            SceneAction::Exit => {
+                self.stack.pop();
+                Ok(SceneAction::Exit)
+            }
         }
     }
 
@@ -54,7 +57,11 @@ impl SceneManager {
         Ok(SceneAction::Continue)
     }
 
-    pub fn pop_to_root(&mut self, mut scene: Box<dyn Scene>, ctx: &mut SceneContext) -> SceneResult {
+    pub fn pop_to_root(
+        &mut self,
+        mut scene: Box<dyn Scene>,
+        ctx: &mut SceneContext,
+    ) -> SceneResult {
         while self.stack.len() > 1 {
             if let Some(mut exiting) = self.stack.pop() {
                 exiting.on_exit(ctx)?;
@@ -92,7 +99,10 @@ impl SceneManager {
             SceneAction::Replace(s) => self.replace(s, ctx),
             SceneAction::Pop => self.pop(ctx),
             SceneAction::PopToRoot(s) => self.pop_to_root(s, ctx),
-            SceneAction::Exit => { info!("Scene requested exit"); Ok(SceneAction::Exit) }
+            SceneAction::Exit => {
+                info!("Scene requested exit");
+                Ok(SceneAction::Exit)
+            }
         }
     }
 
@@ -111,4 +121,3 @@ impl SceneManager {
         }
     }
 }
-

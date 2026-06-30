@@ -1,14 +1,17 @@
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use tracing::info;
 
-/// Native Rust implementation of the first-run wizard.
-/// Replaces the Lua first-run.lua — 3 steps: hotkey, position, ready.
+const TOTAL_STEPS: u32 = 7;
+
 pub struct FirstRunScene {
     step: u32,
     hotkey_mod: String,
     hotkey_key: String,
-    overlay_pos: String,
-    started: bool,
+    position: String,
+    startup: String,
+    perf: String,
+    volume: f32,
+    theme: String,
 }
 
 impl FirstRunScene {
@@ -17,15 +20,17 @@ impl FirstRunScene {
             step: 1,
             hotkey_mod: "ctrl+shift".into(),
             hotkey_key: "v".into(),
-            overlay_pos: "center".into(),
-            started: false,
+            position: "center".into(),
+            startup: "hidden".into(),
+            perf: "balanced".into(),
+            volume: 0.7,
+            theme: "dark".into(),
         }
     }
 
     fn clear(&self, ctx: &mut SceneContext) {
         ctx.renderer.set_clear(0.05, 0.05, 0.15, 1.0);
     }
-
     fn rect(
         &self,
         ctx: &mut SceneContext,
@@ -40,50 +45,71 @@ impl FirstRunScene {
     ) {
         ctx.renderer.draw_rect(x, y, w, h, r, g, b, a);
     }
-
     fn text(
         &self,
         ctx: &mut SceneContext,
         x: f32,
         y: f32,
         s: &str,
-        size: f32,
+        sz: f32,
         r: f32,
         g: f32,
         b: f32,
     ) {
-        ctx.renderer.draw_text(x, y, s, size, r, g, b);
+        ctx.renderer.draw_text(x, y, s, sz, r, g, b);
     }
-
     fn center_text(
         &self,
         ctx: &mut SceneContext,
         y: f32,
         s: &str,
-        size: f32,
+        sz: f32,
         r: f32,
         g: f32,
         b: f32,
     ) {
-        let w = s.len() as f32 * size * 0.5;
-        ctx.renderer.draw_text(400.0 - w, y, s, size, r, g, b);
+        let w = s.len() as f32 * sz * 0.5;
+        ctx.renderer.draw_text(400.0 - w, y, s, sz, r, g, b);
     }
 
-    fn input_pressed(&self, ctx: &SceneContext, key: &str) -> bool {
-        ctx.input
-            .lock()
-            .unwrap()
-            .is_key_pressed(vibege_input::key_name_to_code(key))
+    fn cycle_str(current: &str, options: &[&str], dir: i32) -> String {
+        let idx = options.iter().position(|o| *o == current);
+        let n = match idx {
+            Some(i) => (i as i32 + dir).rem_euclid(options.len() as i32) as usize,
+            None => 0,
+        };
+        options[n].to_string()
     }
 
-    fn draw_radio(&self, ctx: &mut SceneContext, x: f32, y: f32, label: &str, selected: bool) {
-        if selected {
-            self.rect(ctx, x, y, 12.0, 12.0, 0.48, 0.23, 0.93, 1.0);
-            self.rect(ctx, x + 3.0, y + 3.0, 6.0, 6.0, 1.0, 1.0, 1.0, 1.0);
-        } else {
-            self.rect(ctx, x, y, 12.0, 12.0, 0.5, 0.5, 0.6, 0.3);
+    fn save(&self, ctx: &mut SceneContext) {
+        ctx.config.set(vibege_config::VibegeConfig {
+            overlay: vibege_config::OverlayConfig {
+                hotkey_modifiers: self.hotkey_mod.clone(),
+                hotkey_key: self.hotkey_key.clone(),
+                position: self.position.clone(),
+                width: 800,
+                height: 600,
+            },
+            audio: vibege_config::AudioConfig {
+                volume: self.volume,
+            },
+            general: vibege_config::GeneralConfig {
+                startup_behavior: self.startup.clone(),
+                performance_mode: self.perf.clone(),
+                first_run_complete: true,
+            },
+        });
+    }
+
+    fn draw_step_dots(&self, ctx: &mut SceneContext) {
+        for i in 1..=TOTAL_STEPS {
+            let x = 360.0 + (i - 1) as f32 * 14.0;
+            if self.step == i {
+                self.rect(ctx, x, 380.0, 10.0, 10.0, 0.48, 0.23, 0.93, 1.0);
+            } else {
+                self.rect(ctx, x, 380.0, 10.0, 10.0, 0.5, 0.5, 0.6, 0.3);
+            }
         }
-        self.text(ctx, x + 18.0, y, label, 8.0, 1.0, 1.0, 1.0);
     }
 }
 
@@ -92,111 +118,137 @@ impl Scene for FirstRunScene {
         SceneId::FirstRun
     }
 
-    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
-        info!("FirstRunScene: started");
-        let cfg = ctx.config.get();
-        // Pre-fill from any existing config
-        self.hotkey_mod = cfg.overlay.hotkey_modifiers;
-        self.hotkey_key = cfg.overlay.hotkey_key;
-        self.overlay_pos = cfg.overlay.position;
-        self.started = true;
+    fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
+        info!("FirstRunScene: 7-step wizard started");
         Ok(SceneAction::Continue)
     }
 
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
-        let up = self.input_pressed(ctx, "up");
-        let down = self.input_pressed(ctx, "down");
-        let left = self.input_pressed(ctx, "left");
-        let right = self.input_pressed(ctx, "right");
-        let enter = self.input_pressed(ctx, "enter");
+        let up = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("up"));
+        let down = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("down"));
+        let left = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("left"));
+        let right = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("right"));
+        let enter = ctx
+            .input
+            .lock()
+            .expect("lock")
+            .is_key_pressed(vibege_input::key_name_to_code("enter"));
 
-        if self.step == 1 {
-            if up {
-                self.hotkey_mod = match self.hotkey_mod.as_str() {
-                    "ctrl+shift" => "ctrl+alt",
-                    "ctrl+alt" => "alt+shift",
-                    _ => "ctrl+shift",
+        match self.step {
+            1 => {
+                if enter {
+                    self.step = 2;
                 }
-                .into();
             }
-            if down {
-                self.hotkey_mod = match self.hotkey_mod.as_str() {
-                    "ctrl+shift" => "alt+shift",
-                    "alt+shift" => "ctrl+alt",
-                    _ => "ctrl+shift",
+            2 => {
+                if up {
+                    self.hotkey_mod = Self::cycle_str(
+                        &self.hotkey_mod,
+                        &["ctrl+shift", "ctrl+alt", "alt+shift"],
+                        -1,
+                    );
                 }
-                .into();
-            }
-            if left {
-                self.hotkey_key = match self.hotkey_key.as_str() {
-                    "v" => "tab",
-                    "tab" => "space",
-                    "space" => "h",
-                    "h" => "b",
-                    "b" => "g",
-                    _ => "v",
+                if down {
+                    self.hotkey_mod = Self::cycle_str(
+                        &self.hotkey_mod,
+                        &["ctrl+shift", "ctrl+alt", "alt+shift"],
+                        1,
+                    );
                 }
-                .into();
-            }
-            if right {
-                self.hotkey_key = match self.hotkey_key.as_str() {
-                    "v" => "g",
-                    "g" => "b",
-                    "b" => "h",
-                    "h" => "space",
-                    "space" => "tab",
-                    _ => "v",
+                if left {
+                    self.hotkey_key = Self::cycle_str(
+                        &self.hotkey_key,
+                        &["v", "g", "b", "h", "space", "tab"],
+                        -1,
+                    );
                 }
-                .into();
+                if right {
+                    self.hotkey_key =
+                        Self::cycle_str(&self.hotkey_key, &["v", "g", "b", "h", "space", "tab"], 1);
+                }
+                if enter {
+                    self.step = 3;
+                }
             }
-            if enter {
-                self.step = 2;
+            3 => {
+                if up || down {
+                    self.position = Self::cycle_str(
+                        &self.position,
+                        &[
+                            "center",
+                            "top-left",
+                            "top-right",
+                            "bottom-left",
+                            "bottom-right",
+                        ],
+                        if up { -1 } else { 1 },
+                    );
+                }
+                if enter {
+                    self.step = 4;
+                }
             }
-        } else if self.step == 2 {
-            let positions = [
-                "center",
-                "top-left",
-                "top-right",
-                "bottom-left",
-                "bottom-right",
-            ];
-            if up {
-                let idx = positions
-                    .iter()
-                    .position(|&p| *p == self.overlay_pos)
-                    .unwrap_or(0);
-                self.overlay_pos = positions[(idx + 1) % positions.len()].into();
+            4 => {
+                if up || down {
+                    self.startup = Self::cycle_str(
+                        &self.startup,
+                        &["hidden", "shown", "minimized"],
+                        if up { -1 } else { 1 },
+                    );
+                }
+                if enter {
+                    self.step = 5;
+                }
             }
-            if down {
-                let idx = positions
-                    .iter()
-                    .position(|&p| *p == self.overlay_pos)
-                    .unwrap_or(0);
-                self.overlay_pos = positions[(idx + positions.len() - 1) % positions.len()].into();
+            5 => {
+                if up || down {
+                    self.perf = Self::cycle_str(
+                        &self.perf,
+                        &["battery", "balanced", "performance"],
+                        if up { -1 } else { 1 },
+                    );
+                }
+                if enter {
+                    self.step = 6;
+                }
             }
-            if enter {
-                self.step = 3;
+            6 => {
+                if left {
+                    self.volume = (self.volume - 0.1).clamp(0.0, 1.0);
+                }
+                if right {
+                    self.volume = (self.volume + 0.1).clamp(0.0, 1.0);
+                }
+                if enter {
+                    self.step = 7;
+                }
             }
-        } else if self.step == 3 && enter {
-            ctx.config.set(vibege_config::VibegeConfig {
-                overlay: vibege_config::OverlayConfig {
-                    hotkey_modifiers: self.hotkey_mod.clone(),
-                    hotkey_key: self.hotkey_key.clone(),
-                    position: self.overlay_pos.clone(),
-                    width: 800,
-                    height: 600,
-                },
-                audio: vibege_config::AudioConfig { volume: 0.7 },
-                general: vibege_config::GeneralConfig {
-                    startup_behavior: "hidden".into(),
-                    performance_mode: "balanced".into(),
-                    first_run_complete: true,
-                },
-            });
-            info!("FirstRunScene: settings saved, transitioning to Home");
-            return Ok(SceneAction::Replace(Box::new(
-                super::home_scene::HomeScene::new(),
-            )));
+            7 => {
+                if enter {
+                    self.save(ctx);
+                    info!("FirstRun complete, transitioning to Home");
+                    return Ok(SceneAction::Replace(Box::new(
+                        super::home_scene::HomeScene::new(),
+                    )));
+                }
+            }
+            _ => {}
         }
 
         Ok(SceneAction::Continue)
@@ -204,130 +256,244 @@ impl Scene for FirstRunScene {
 
     fn on_render(&mut self, ctx: &mut SceneContext) -> SceneResult {
         self.clear(ctx);
-        // Accent bar
         self.rect(ctx, 0.0, 0.0, 800.0, 3.0, 0.48, 0.23, 0.93, 1.0);
 
-        if self.step == 1 {
-            self.center_text(ctx, 60.0, "Welcome to VibeGE!", 16.0, 1.0, 1.0, 1.0);
-            self.center_text(
-                ctx,
-                90.0,
-                "The gaming overlay for AI-assisted development",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-            self.rect(ctx, 150.0, 130.0, 500.0, 1.0, 0.5, 0.5, 0.6, 0.3);
-            self.center_text(
-                ctx,
-                160.0,
-                "Choose your overlay hotkey",
-                10.0,
-                1.0,
-                1.0,
-                1.0,
-            );
-            self.center_text(
-                ctx,
-                185.0,
-                "Up/Down to change modifier, Left/Right to change key",
-                7.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-
-            let hk = format!("{} + {}", self.hotkey_mod, self.hotkey_key);
-            self.center_text(ctx, 230.0, &hk, 20.0, 0.48, 0.23, 0.93);
-            self.center_text(ctx, 260.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
-        } else if self.step == 2 {
-            self.center_text(ctx, 60.0, "Overlay Position", 14.0, 1.0, 1.0, 1.0);
-            self.center_text(
-                ctx,
-                85.0,
-                "Where should the overlay appear?",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-
-            for (i, pos) in [
-                "center",
-                "top-left",
-                "top-right",
-                "bottom-left",
-                "bottom-right",
-            ]
-            .iter()
-            .enumerate()
-            {
-                self.draw_radio(
+        match self.step {
+            1 => {
+                self.center_text(ctx, 60.0, "Welcome to VibeGE!", 18.0, 1.0, 1.0, 1.0);
+                self.center_text(
                     ctx,
-                    250.0,
-                    130.0 + i as f32 * 30.0,
-                    pos,
-                    self.overlay_pos == *pos,
+                    90.0,
+                    "The gaming overlay for AI-assisted development",
+                    9.0,
+                    0.5,
+                    0.5,
+                    0.6,
                 );
+                self.rect(ctx, 150.0, 130.0, 500.0, 1.0, 0.5, 0.5, 0.6, 0.3);
+                self.center_text(
+                    ctx,
+                    170.0,
+                    "Configure your overlay in the next few steps.",
+                    8.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                );
+                self.center_text(
+                    ctx,
+                    200.0,
+                    "You can change everything later in Settings.",
+                    8.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                self.rect(ctx, 280.0, 270.0, 240.0, 40.0, 0.48, 0.23, 0.93, 1.0);
+                self.center_text(ctx, 278.0, "  Get Started", 12.0, 1.0, 1.0, 1.0);
             }
-            self.center_text(ctx, 320.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
-        } else if self.step == 3 {
-            self.center_text(ctx, 80.0, "You're all set!", 16.0, 1.0, 1.0, 1.0);
-            let hk = format!("{} + {}", self.hotkey_mod, self.hotkey_key);
-            self.center_text(ctx, 110.0, &hk, 10.0, 0.48, 0.23, 0.93);
-            self.center_text(ctx, 135.0, &self.overlay_pos, 10.0, 0.48, 0.23, 0.93);
-            self.center_text(
-                ctx,
-                200.0,
-                "Press hotkey at any time to open the overlay",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-            self.center_text(
-                ctx,
-                220.0,
-                "and play your installed games while AI works.",
-                8.0,
-                0.5,
-                0.5,
-                0.6,
-            );
-            self.rect(ctx, 250.0, 270.0, 300.0, 40.0, 0.48, 0.23, 0.93, 1.0);
-            self.center_text(ctx, 278.0, "Get Started", 10.0, 1.0, 1.0, 1.0);
-        }
-
-        // Step indicators
-        for i in 1..=3 {
-            if self.step == i {
+            2 => {
+                self.center_text(ctx, 60.0, "Overlay Hotkey", 14.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    85.0,
+                    "Press Up/Down to change modifier, Left/Right to change key",
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                let hk = format!("{} + {}", self.hotkey_mod, self.hotkey_key);
+                self.center_text(ctx, 160.0, &hk, 24.0, 0.48, 0.23, 0.93);
+                self.center_text(ctx, 200.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
+            }
+            3 => {
+                self.center_text(ctx, 60.0, "Overlay Position", 14.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    85.0,
+                    "Where should the overlay appear?",
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                for (i, p) in [
+                    "center",
+                    "top-left",
+                    "top-right",
+                    "bottom-left",
+                    "bottom-right",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let x = 250.0;
+                    let y = 130.0 + i as f32 * 30.0;
+                    if self.position == *p {
+                        self.rect(ctx, x, y, 12.0, 12.0, 0.48, 0.23, 0.93, 1.0);
+                        self.rect(ctx, x + 3.0, y + 3.0, 6.0, 6.0, 1.0, 1.0, 1.0, 1.0);
+                    } else {
+                        self.rect(ctx, x, y, 12.0, 12.0, 0.5, 0.5, 0.6, 0.3);
+                    }
+                    self.text(ctx, x + 18.0, y, p, 8.0, 1.0, 1.0, 1.0);
+                }
+                self.center_text(ctx, 320.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
+            }
+            4 => {
+                self.center_text(ctx, 60.0, "Startup Behaviour", 14.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    85.0,
+                    "What should happen when you start VibeGE?",
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                for (i, s) in ["hidden", "shown", "minimized"].iter().enumerate() {
+                    let y = 140.0 + i as f32 * 50.0;
+                    if self.startup == *s {
+                        self.rect(ctx, 250.0, y, 300.0, 40.0, 0.25, 0.15, 0.45, 1.0);
+                    }
+                    self.center_text(ctx, y + 10.0, s, 10.0, 1.0, 1.0, 1.0);
+                    self.center_text(
+                        ctx,
+                        y + 25.0,
+                        match *s {
+                            "hidden" => "Start in background (tray only)",
+                            "shown" => "Show the overlay window on start",
+                            "minimized" => "Start minimized to taskbar",
+                            _ => "",
+                        },
+                        7.0,
+                        0.5,
+                        0.5,
+                        0.6,
+                    );
+                }
+                self.center_text(ctx, 320.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
+            }
+            5 => {
+                self.center_text(ctx, 60.0, "Performance Profile", 14.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    85.0,
+                    "Balance performance vs. battery life",
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                for (i, p) in ["battery", "balanced", "performance"].iter().enumerate() {
+                    let y = 140.0 + i as f32 * 50.0;
+                    if self.perf == *p {
+                        self.rect(ctx, 250.0, y, 300.0, 40.0, 0.25, 0.15, 0.45, 1.0);
+                    }
+                    self.center_text(ctx, y + 10.0, p, 10.0, 1.0, 1.0, 1.0);
+                    self.center_text(
+                        ctx,
+                        y + 25.0,
+                        match *p {
+                            "battery" => "Lower frame rate, longer battery",
+                            "balanced" => "Standard frame rate and quality",
+                            "performance" => "Maximum frame rate, higher power use",
+                            _ => "",
+                        },
+                        7.0,
+                        0.5,
+                        0.5,
+                        0.6,
+                    );
+                }
+                self.center_text(ctx, 320.0, "Press Enter to continue", 7.0, 0.5, 0.5, 0.6);
+            }
+            6 => {
+                self.center_text(ctx, 60.0, "Audio Volume", 14.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    85.0,
+                    "Set the default volume for game audio",
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                self.center_text(
+                    ctx,
+                    150.0,
+                    &format!("{:.0}%", self.volume * 100.0),
+                    22.0,
+                    0.48,
+                    0.23,
+                    0.93,
+                );
+                self.rect(ctx, 250.0, 180.0, 300.0, 8.0, 0.3, 0.3, 0.4, 1.0);
                 self.rect(
                     ctx,
-                    380.0 + (i - 1) as f32 * 20.0,
-                    360.0,
-                    12.0,
-                    12.0,
+                    250.0,
+                    180.0,
+                    (self.volume * 300.0) as f32,
+                    8.0,
                     0.48,
                     0.23,
                     0.93,
                     1.0,
                 );
-            } else {
-                self.rect(
+                self.center_text(
                     ctx,
-                    380.0 + (i - 1) as f32 * 20.0,
-                    360.0,
-                    12.0,
-                    12.0,
+                    210.0,
+                    "Left/Right to adjust     Enter to continue",
+                    7.0,
                     0.5,
                     0.5,
                     0.6,
-                    0.3,
                 );
             }
+            7 => {
+                self.center_text(ctx, 80.0, "You're all set!", 18.0, 1.0, 1.0, 1.0);
+                self.center_text(
+                    ctx,
+                    115.0,
+                    &format!("Hotkey: {} + {}", self.hotkey_mod, self.hotkey_key),
+                    10.0,
+                    0.48,
+                    0.23,
+                    0.93,
+                );
+                self.center_text(
+                    ctx,
+                    135.0,
+                    &format!(
+                        "Position: {}  |  Startup: {}  |  Mode: {}",
+                        self.position, self.startup, self.perf
+                    ),
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                self.center_text(
+                    ctx,
+                    155.0,
+                    &format!(
+                        "Volume: {:.0}%  |  Theme: {}",
+                        self.volume * 100.0,
+                        self.theme
+                    ),
+                    7.0,
+                    0.5,
+                    0.5,
+                    0.6,
+                );
+                self.center_text(ctx, 210.0, "Press Enter to open VibeGE", 9.0, 0.5, 0.5, 0.6);
+                self.rect(ctx, 280.0, 250.0, 240.0, 40.0, 0.48, 0.23, 0.93, 1.0);
+                self.center_text(ctx, 258.0, "  Launch VibeGE", 12.0, 1.0, 1.0, 1.0);
+            }
+            _ => {}
         }
 
+        self.draw_step_dots(ctx);
         Ok(SceneAction::Continue)
     }
 }

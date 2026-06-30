@@ -460,6 +460,7 @@ impl Renderer {
     /// `char_w` = width in pixels of one character (e.g. 8.0 for 1:1 scale, 16.0 for 2x).
     /// Character height = `char_w * 1.0` (square glyphs).
     /// Only ASCII 32–126 is supported; out-of-range chars render as space.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_text(&self, x: f32, y: f32, text: &str, char_w: f32, r: f32, g: f32, b: f32) {
         let char_h = char_w; // square glyphs
         let atlas_w = self.font_tex_w as f32;
@@ -470,6 +471,7 @@ impl Renderer {
         let mut list = self.draw_list.lock().unwrap();
         for (i, ch) in text.chars().enumerate() {
             let mut code = ch as u8;
+            #[allow(clippy::manual_range_contains)]
             if code < b' ' || code > b'~' {
                 code = b' ';
             }
@@ -503,6 +505,7 @@ impl Renderer {
     }
 
     /// Render all queued commands and present the frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(&self) -> Result<(), RenderError> {
         #[derive(PartialEq)]
         enum BgKind {
@@ -545,6 +548,7 @@ impl Renderer {
             occlusion_query_set: None,
         });
 
+        #[allow(clippy::too_many_arguments)]
         fn add_rect(
             x: f32,
             y: f32,
@@ -587,6 +591,7 @@ impl Renderer {
             idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn add_sprite(
             _tex_idx: usize,
             x: f32,
@@ -626,6 +631,7 @@ impl Renderer {
             idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn add_glyph(
             x: f32,
             y: f32,

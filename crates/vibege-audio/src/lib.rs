@@ -5,14 +5,24 @@ use tracing::{debug, info, warn};
 /// Audio system for playing sound effects and music.
 ///
 /// Uses rodio for cross-platform audio playback.
-/// Sounds are loaded from WAV files and played with low latency.
+/// The OutputStream is stored as a raw pointer because it is !Send on Windows (WASAPI).
 pub struct AudioSystem {
-    #[allow(dead_code)]
-    stream: OutputStream,
+    stream_ptr: *mut OutputStream,
     handle: OutputStreamHandle,
     #[allow(dead_code)]
     music_volume: Mutex<f32>,
     sfx_volume: Mutex<f32>,
+}
+
+unsafe impl Send for AudioSystem {}
+unsafe impl Sync for AudioSystem {}
+
+impl Drop for AudioSystem {
+    fn drop(&mut self) {
+        if !self.stream_ptr.is_null() {
+            unsafe { drop(Box::from_raw(self.stream_ptr)); }
+        }
+    }
 }
 
 impl AudioSystem {
@@ -21,9 +31,10 @@ impl AudioSystem {
     pub fn new() -> Option<Self> {
         match OutputStream::try_default() {
             Ok((stream, handle)) => {
+                let stream_ptr = Box::into_raw(Box::new(stream));
                 info!("Audio system initialised");
                 Some(Self {
-                    stream,
+                    stream_ptr,
                     handle,
                     music_volume: Mutex::new(0.5),
                     sfx_volume: Mutex::new(0.7),

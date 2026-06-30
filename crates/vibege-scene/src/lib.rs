@@ -6,5 +6,6 @@
     clippy::unnecessary_cast
 )]
 
+pub mod input_helper;
 pub mod scene;
 pub mod scenes;

@@ -345,7 +345,10 @@ mod tests {
             direction: MessageDirection::Response,
             kind: MessageKind::Error,
             payload: String::new(),
-            error: Some(IpcError { code: 400, message: "Bad request".into() }),
+            error: Some(IpcError {
+                code: 400,
+                message: "Bad request".into(),
+            }),
         };
         assert_eq!(err.direction, MessageDirection::Response);
         assert_eq!(err.kind, MessageKind::Error);

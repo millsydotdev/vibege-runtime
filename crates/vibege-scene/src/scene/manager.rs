@@ -18,7 +18,6 @@ impl SceneManager {
         let action = scene.on_enter(ctx)?;
         self.stack.push(scene);
 
-        // If on_enter requested a transition, process it now
         match action {
             SceneAction::Continue => Ok(SceneAction::Continue),
             SceneAction::Replace(s) => {
@@ -112,6 +111,10 @@ impl SceneManager {
 
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
+    }
+
+    pub fn depth(&self) -> usize {
+        self.stack.len()
     }
 
     pub fn shutdown(&mut self, ctx: &mut SceneContext) {

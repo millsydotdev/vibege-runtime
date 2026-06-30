@@ -190,5 +190,4 @@ mod tests {
         // Each char is 8 bytes
         assert_eq!(FONT_BITS.len(), count * 8);
     }
-
 }

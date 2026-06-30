@@ -75,7 +75,9 @@ pub struct EventBus {
 }
 
 impl Default for EventBus {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventBus {

@@ -50,17 +50,34 @@ local function pressed(key)
     return false
 end
 
--- Sample games
+-- Game discovery: installed games from ~/.vibege/games/ + demo entries
 local function init_games()
-    games_live = {
-        {name="Pong",          desc="Classic paddle arcade",             author="VibeGE",         status="live", size="1.2 MB", plays=1240},
-        {name="Asteroids",     desc="Shoot rocks in space",             author="VibeGE",         status="live", size="2.1 MB", plays=892},
-        {name="Snake",         desc="Grow the longest snake",           author="Community",      status="live", size="0.5 MB", plays=456},
-    }
-    games_dev = {
-        {name="Void Drifter",  desc="Space exploration survival",       author="VibeGE Labs",    status="dev",  size="3.4 MB", plays=67},
-        {name="Block Puzzle",  desc="Relaxing puzzle game",            author="Community Dev",  status="dev",  size="1.8 MB", plays=23},
-    }
+    games_live = {}
+    games_dev = {}
+
+    -- List installed games
+    local installed = {}
+    if vibege.runtime.list_installed then
+        installed = vibege.runtime.list_installed()
+    end
+
+    for _, game in ipairs(installed) do
+        table.insert(games_live, {
+            name=game.name, desc=game.desc, author=game.author,
+            status=game.status, size="local", plays=0,
+            path=game.path
+        })
+    end
+
+    -- Add demo entries if no games installed
+    if #games_live == 0 then
+        games_live = {
+            {name="Pong",          desc="Classic paddle arcade",        author="VibeGE",     status="live",  size="1.2 MB", plays=1240, path="demo"},
+        }
+        games_dev = {
+            {name="Void Drifter",  desc="Space exploration survival",   author="VibeGE Labs", status="dev",   size="3.4 MB", plays=67,   path="demo"},
+        }
+    end
 end
 
 function init()
@@ -91,15 +108,9 @@ function update(dt)
         local game = active[selection]
         if game then
             print("Launching: " .. game.name)
-            if game.name == "Pong" then
-                vibege.runtime.switch_game("demo")
-            elseif game.name == "Asteroids" then
-                vibege.runtime.switch_game("demo")
-            elseif game.name == "Snake" then
-                vibege.runtime.switch_game("demo")
-            elseif game.name == "Void Drifter" then
-                vibege.runtime.switch_game("demo")
-            elseif game.name == "Block Puzzle" then
+            if game.path and game.path ~= "" then
+                vibege.runtime.switch_game(game.path)
+            else
                 vibege.runtime.switch_game("demo")
             end
         end

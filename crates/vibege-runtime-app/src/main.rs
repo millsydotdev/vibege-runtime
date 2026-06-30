@@ -262,6 +262,44 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }).expect("create switch_game")).expect("set switch_game");
     }
+
+    // list_installed() — returns table of games installed in ~/.vibege/games/
+    {
+        runtime_table.set("list_installed", lua.create_function(move |lua, ()| {
+            let game_dirs = installed_games_dir();
+            let results = lua.create_table().expect("create results");
+            let mut idx = 1;
+
+            if let Ok(entries) = std::fs::read_dir(&game_dirs) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() { continue; }
+                    let meta_path = path.join(".vibege-install.json");
+                    if !meta_path.exists() { continue; }
+
+                    if let Ok(content) = std::fs::read_to_string(&meta_path) {
+                        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let name = meta["name"].as_str().unwrap_or("");
+                            let entry_p = meta["entry"].as_str().unwrap_or("src/main.lua");
+                            if !name.is_empty() {
+                                let game_table = lua.create_table().expect("game table");
+                                let _ = game_table.set("name", name);
+                                let _ = game_table.set("desc", "Installed game");
+                                let _ = game_table.set("author", "Local");
+                                let _ = game_table.set("status", "installed");
+                                let _ = game_table.set("path", path.join(entry_p).to_string_lossy().to_string());
+                                let _ = results.set(idx, game_table);
+                                idx += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(results)
+        }).expect("create list_installed")).expect("set list_installed");
+    }
+
     vibege.set("runtime", runtime_table).expect("set runtime");
 
     lua.globals().set("vibege", vibege).expect("set vibege globals");
@@ -450,6 +488,15 @@ fn main() -> anyhow::Result<()> {
 
     info!("Runtime exited");
     Ok(())
+}
+
+/// Return the directory where locally-installed games are stored.
+fn installed_games_dir() -> PathBuf {
+    if let Some(data_dir) = dirs::data_dir() {
+        data_dir.join("vibege").join("games")
+    } else {
+        PathBuf::from(".vibege/installed-games")
+    }
 }
 
 fn key_name_to_code(name: &str) -> KeyCode {

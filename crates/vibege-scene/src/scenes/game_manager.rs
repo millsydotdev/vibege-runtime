@@ -190,7 +190,7 @@ impl GameSession {
             });
         }
         info!("Game session created");
-        let eb = event_bus.as_ref().map(|a| Arc::clone(a));
+        let eb = event_bus.as_ref().map(Arc::clone);
         Ok(Self {
             lua,
             has_update,

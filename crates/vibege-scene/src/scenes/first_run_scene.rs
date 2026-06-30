@@ -177,29 +177,26 @@ impl Scene for FirstRunScene {
             if enter {
                 self.step = 3;
             }
-        } else if self.step == 3 {
-            if enter {
-                // Save settings
-                ctx.config.set(vibege_config::VibegeConfig {
-                    overlay: vibege_config::OverlayConfig {
-                        hotkey_modifiers: self.hotkey_mod.clone(),
-                        hotkey_key: self.hotkey_key.clone(),
-                        position: self.overlay_pos.clone(),
-                        width: 800,
-                        height: 600,
-                    },
-                    audio: vibege_config::AudioConfig { volume: 0.7 },
-                    general: vibege_config::GeneralConfig {
-                        startup_behavior: "hidden".into(),
-                        performance_mode: "balanced".into(),
-                        first_run_complete: true,
-                    },
-                });
-                info!("FirstRunScene: settings saved, transitioning to Home");
-                return Ok(SceneAction::Replace(Box::new(
-                    super::home_scene::HomeScene::new(),
-                )));
-            }
+        } else if self.step == 3 && enter {
+            ctx.config.set(vibege_config::VibegeConfig {
+                overlay: vibege_config::OverlayConfig {
+                    hotkey_modifiers: self.hotkey_mod.clone(),
+                    hotkey_key: self.hotkey_key.clone(),
+                    position: self.overlay_pos.clone(),
+                    width: 800,
+                    height: 600,
+                },
+                audio: vibege_config::AudioConfig { volume: 0.7 },
+                general: vibege_config::GeneralConfig {
+                    startup_behavior: "hidden".into(),
+                    performance_mode: "balanced".into(),
+                    first_run_complete: true,
+                },
+            });
+            info!("FirstRunScene: settings saved, transitioning to Home");
+            return Ok(SceneAction::Replace(Box::new(
+                super::home_scene::HomeScene::new(),
+            )));
         }
 
         Ok(SceneAction::Continue)

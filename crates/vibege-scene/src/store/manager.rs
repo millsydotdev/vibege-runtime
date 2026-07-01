@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -31,10 +30,6 @@ pub struct StoreManager {
     error: Mutex<Option<String>>,
     /// Loading state.
     loading: Mutex<bool>,
-    /// Pending async download results: game_id -> Result<Vec<u8>, String>
-    pending_downloads: Mutex<HashMap<String, Result<Vec<u8>, String>>>,
-    /// Active async download handles to prevent duplicates
-    active_downloads: Mutex<Vec<String>>,
 }
 
 impl StoreManager {
@@ -48,8 +43,6 @@ impl StoreManager {
             installed_ids: Mutex::new(Vec::new()),
             error: Mutex::new(None),
             loading: Mutex::new(false),
-            pending_downloads: Mutex::new(HashMap::new()),
-            active_downloads: Mutex::new(Vec::new()),
         }
     }
 

@@ -78,9 +78,7 @@ impl HomeScene {
         let recently_played_names = self.manager.history.recently_played(5);
         let recently_played: Vec<InstalledGame> = recently_played_names
             .iter()
-            .filter_map(|name| {
-                games.iter().find(|g| g.name == *name).cloned()
-            })
+            .filter_map(|name| games.iter().find(|g| g.name == *name).cloned())
             .collect();
 
         let fav_names = self.manager.collections.by_kind(CollectionKind::Favorites);
@@ -224,8 +222,7 @@ impl Scene for HomeScene {
         let inp = InputState::new(
             &ctx.input,
             &[
-                "up", "down", "left", "right", "enter", "space", "escape",
-                "s", "l", "o", "f",
+                "up", "down", "left", "right", "enter", "space", "escape", "s", "l", "o", "f",
             ],
         );
 
@@ -285,7 +282,7 @@ impl Scene for HomeScene {
                     0 => {
                         return Ok(SceneAction::Push(Box::new(
                             super::settings_scene::SettingsScene::new(),
-                        )))
+                        )));
                     }
                     1 => {
                         let backend = ctx.config.get().general.backend_url;
@@ -457,13 +454,33 @@ impl Scene for HomeScene {
                 if game.total_play_time_secs > 0 {
                     let label = format!("{}m", game.total_play_time_secs / 60);
                     badge_x -= label.len() as f32 * 7.0 + 10.0;
-                    self.rect(ctx, badge_x, y + 6.0, label.len() as f32 * 7.0 + 6.0, 14.0, 0.2, 0.3, 0.6, 0.15);
+                    self.rect(
+                        ctx,
+                        badge_x,
+                        y + 6.0,
+                        label.len() as f32 * 7.0 + 6.0,
+                        14.0,
+                        0.2,
+                        0.3,
+                        0.6,
+                        0.15,
+                    );
                     self.text(ctx, badge_x + 3.0, y + 7.0, &label, 6.0, 0.4, 0.5, 0.8);
                 }
                 if game.play_count > 0 {
                     let label = format!("{}x", game.play_count);
                     badge_x -= label.len() as f32 * 7.0 + 10.0;
-                    self.rect(ctx, badge_x, y + 6.0, label.len() as f32 * 7.0 + 6.0, 14.0, 0.3, 0.5, 0.3, 0.15);
+                    self.rect(
+                        ctx,
+                        badge_x,
+                        y + 6.0,
+                        label.len() as f32 * 7.0 + 6.0,
+                        14.0,
+                        0.3,
+                        0.5,
+                        0.3,
+                        0.15,
+                    );
                     self.text(ctx, badge_x + 3.0, y + 7.0, &label, 6.0, 0.3, 0.7, 0.4);
                 }
 

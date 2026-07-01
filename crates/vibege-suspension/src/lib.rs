@@ -203,10 +203,13 @@ impl SuspensionEngine {
 
         // Optionally compress the serialised data
         let (disk_data, compressed) = if self.config.enable_compression {
-            let compressed =
-                zstd::encode_all(std::io::Cursor::new(&serialised), self.config.compression_level).map_err(|e| {
-                    RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to compress snapshot", e)
-                })?;
+            let compressed = zstd::encode_all(
+                std::io::Cursor::new(&serialised),
+                self.config.compression_level,
+            )
+            .map_err(|e| {
+                RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to compress snapshot", e)
+            })?;
             (compressed, true)
         } else {
             (serialised.clone(), false)

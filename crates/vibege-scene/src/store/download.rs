@@ -29,8 +29,7 @@ impl DownloadQueue {
     pub fn enqueue(&self, game_id: String, game_name: String) {
         let mut queue = self.queue.lock().expect("queue lock");
         let active = self.active.lock().expect("active lock");
-        if queue.iter().any(|t| t.game_id == game_id)
-            || active.iter().any(|t| t.game_id == game_id)
+        if queue.iter().any(|t| t.game_id == game_id) || active.iter().any(|t| t.game_id == game_id)
         {
             return;
         }
@@ -90,11 +89,10 @@ impl DownloadQueue {
     /// Mark a download as failed. Retries if under max_retries.
     pub fn fail(&self, game_id: &str, error: String) {
         let mut active = self.active.lock().expect("active lock");
-        let task = if let Some(pos) = active.iter().position(|t| t.game_id == game_id) {
-            Some(active.remove(pos))
-        } else {
-            None
-        };
+        let task = active
+            .iter()
+            .position(|t| t.game_id == game_id)
+            .map(|pos| active.remove(pos));
         drop(active);
 
         if let Some(mut task) = task {
@@ -202,7 +200,13 @@ impl DownloadQueue {
 
     /// All tasks (queued + active).
     pub fn all(&self) -> Vec<DownloadTask> {
-        let mut tasks: Vec<DownloadTask> = self.queue.lock().expect("queue lock").iter().cloned().collect();
+        let mut tasks: Vec<DownloadTask> = self
+            .queue
+            .lock()
+            .expect("queue lock")
+            .iter()
+            .cloned()
+            .collect();
         tasks.extend(self.active.lock().expect("active lock").iter().cloned());
         tasks
     }

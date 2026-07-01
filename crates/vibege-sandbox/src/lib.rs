@@ -155,13 +155,34 @@ impl Sandbox {
         }
         cmd.env("VIBEGE_SANDBOXED", "1");
         cmd.env("VIBEGE_SANDBOX_NAME", &config.name);
+
+        let max_proc = config.max_processes;
+        let max_fsize_mb = config.max_file_size_mb;
+        let max_mem_mb = config.max_memory_mb;
+
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                let mem_bytes = (max_mem_mb as u64) * 1024 * 1024;
+                let rlim = libc::rlimit { rlim_cur: mem_bytes, rlim_max: mem_bytes };
+                libc::setrlimit(libc::RLIMIT_AS, &rlim);
+                libc::setrlimit(libc::RLIMIT_DATA, &rlim);
+                let stack = mem_bytes.min(8 * 1024 * 1024);
+                let rlim_s = libc::rlimit { rlim_cur: stack, rlim_max: stack };
+                libc::setrlimit(libc::RLIMIT_STACK, &rlim_s);
+                let rlim_n = libc::rlimit { rlim_cur: max_proc as u64, rlim_max: max_proc as u64 };
+                libc::setrlimit(libc::RLIMIT_NPROC, &rlim_n);
+                let fsize = (max_fsize_mb as u64) * 1024 * 1024;
+                let rlim_f = libc::rlimit { rlim_cur: fsize, rlim_max: fsize };
+                libc::setrlimit(libc::RLIMIT_FSIZE, &rlim_f);
+                Ok(())
+            })
+        }
+
         let child = cmd.spawn().map_err(|e| {
             RuntimeError::with_cause(
                 ErrorCode::INIT_FAILED,
-                format!(
-                    "Failed to spawn game process: {}",
-                    config.game_path.display()
-                ),
+                format!("Failed to spawn game process: {}", config.game_path.display()),
                 e,
             )
         })?;

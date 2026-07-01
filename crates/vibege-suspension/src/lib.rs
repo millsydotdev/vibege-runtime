@@ -95,6 +95,10 @@ pub struct SuspensionConfig {
     /// Enable compression for snapshots.
     pub enable_compression: bool,
 
+    /// Zstd compression level (1–22). Higher = smaller but slower.
+    /// Default 3. Use 0 for encoder default.
+    pub compression_level: i32,
+
     /// Automatically capture snapshots on update.
     pub auto_snapshot: bool,
 
@@ -108,6 +112,7 @@ impl Default for SuspensionConfig {
             snapshot_dir: PathBuf::from("./snapshots"),
             max_snapshots: MAX_SNAPSHOTS_PER_GAME,
             enable_compression: true,
+            compression_level: 3,
             auto_snapshot: false,
             auto_snapshot_interval_secs: 0,
         }
@@ -199,7 +204,7 @@ impl SuspensionEngine {
         // Optionally compress the serialised data
         let (disk_data, compressed) = if self.config.enable_compression {
             let compressed =
-                zstd::encode_all(std::io::Cursor::new(&serialised), 3).map_err(|e| {
+                zstd::encode_all(std::io::Cursor::new(&serialised), self.config.compression_level).map_err(|e| {
                     RuntimeError::with_cause(ErrorCode::INTERNAL, "Failed to compress snapshot", e)
                 })?;
             (compressed, true)

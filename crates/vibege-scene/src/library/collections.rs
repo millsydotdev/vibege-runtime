@@ -80,6 +80,17 @@ impl CollectionManager {
         self.collections.lock().expect("collections lock").clone()
     }
 
+    /// Get game names for a specific collection kind.
+    pub fn by_kind(&self, kind: CollectionKind) -> Vec<String> {
+        self.collections
+            .lock()
+            .expect("collections lock")
+            .iter()
+            .find(|c| c.kind == kind)
+            .map(|c| c.game_names.clone())
+            .unwrap_or_default()
+    }
+
     pub fn get(&self, name: &str) -> Option<Collection> {
         let collections = self.collections.lock().expect("collections lock");
         collections.iter().find(|c| c.name == name).cloned()

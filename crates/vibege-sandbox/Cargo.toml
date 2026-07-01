@@ -10,6 +10,9 @@ description = "Sandbox — OS-level process isolation for game execution"
 vibege-core = { path = "../vibege-core" }
 tracing = "0.1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",

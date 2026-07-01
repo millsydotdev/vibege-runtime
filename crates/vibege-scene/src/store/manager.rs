@@ -37,7 +37,7 @@ impl StoreManager {
         Self {
             backend,
             cache: Arc::new(StoreCache::new()),
-            downloads: Arc::new(DownloadQueue::new(3)),
+            downloads: Arc::new(DownloadQueue::new(3, 3)),
             listings: Mutex::new(Vec::new()),
             sections: Mutex::new(Vec::new()),
             installed_ids: Mutex::new(Vec::new()),

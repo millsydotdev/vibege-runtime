@@ -4,12 +4,11 @@
 //! and sandboxed game processes.
 //!
 //! Messages are serialized with JSON (length-prefixed framing) and
-//! transported over local TCP (127.0.0.1) for cross-platform compatibility.
-//! Production target: named pipes (Windows) / Unix domain sockets (Unix).
+//! transported over Unix domain sockets (Unix) or TCP (Windows fallback).
 //!
 //! ## Architecture
 //!
-//! - Runtime opens a listener on a local TCP port
+//! - Runtime opens a listener on a Unix domain socket / TCP port
 //! - Game process connects and performs a handshake
 //! - Messages flow bidirectionally with correlation IDs for requests
 //! - Message size limits and timeouts prevent abuse
@@ -18,7 +17,6 @@
 use std::cmp::min;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -26,6 +24,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use vibege_core::{ErrorCode, Result, RuntimeError};
+
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -160,10 +161,26 @@ impl IpcTransport {
     }
 }
 
+// ─── Platform Stream ────────────────────────────────────────────────
+
+/// Platform-specific IPC stream.
+/// - Unix: `UnixStream` (domain socket)
+/// - Windows: `TcpStream` (local TCP loopback)
+#[cfg(unix)]
+pub type IpcStream = UnixStream;
+#[cfg(windows)]
+pub type IpcStream = std::net::TcpStream;
+
+/// Platform-specific IPC listener.
+#[cfg(unix)]
+pub type IpcListener = UnixListener;
+#[cfg(windows)]
+pub type IpcListener = std::net::TcpListener;
+
 // ─── Write helpers ───────────────────────────────────────────────
 
 fn write_message_to(
-    stream: &mut TcpStream,
+    stream: &mut IpcStream,
     message: &IpcMessage,
     max_size: u64,
     stats: &Arc<Mutex<ConnectionStats>>,
@@ -197,7 +214,7 @@ fn write_message_to(
 }
 
 fn read_message_from(
-    stream: &mut TcpStream,
+    stream: &mut IpcStream,
     max_size: u64,
     timeout: Duration,
     stats: &Arc<Mutex<ConnectionStats>>,
@@ -278,15 +295,12 @@ impl IpcConnection {
     }
 
     /// Connects to the IPC listener with retry+backoff.
-    fn connect_stream(&self) -> Result<TcpStream> {
+    fn connect_stream(&self) -> Result<IpcStream> {
         let mut last_err = None;
         for attempt in 1..=MAX_RECONNECT_ATTEMPTS {
-            match TcpStream::connect(&self.transport.address) {
-                Ok(stream) => {
-                    stream.set_read_timeout(Some(self.timeout)).ok();
-                    stream.set_write_timeout(Some(self.timeout)).ok();
-                    return Ok(stream);
-                }
+            let result = connect_to_address(&self.transport.address);
+            match result {
+                Ok(stream) => return Ok(stream),
                 Err(e) => {
                     last_err = Some(e);
                     if attempt < MAX_RECONNECT_ATTEMPTS {
@@ -353,12 +367,50 @@ impl IpcConnection {
 
 // ─── Listener ────────────────────────────────────────────────────
 
-/// Binds a TCP listener for IPC connections.
-pub fn bind_ipc_listener(transport: &IpcTransport) -> Result<TcpListener> {
-    let listener = TcpListener::bind(&transport.address).map_err(|e| {
+/// Binds an IPC listener using the platform-appropriate transport.
+/// Unix: Unix domain socket. Windows: TCP loopback.
+pub fn bind_ipc_listener(transport: &IpcTransport) -> Result<IpcListener> {
+    bind_address(&transport.address)
+}
+
+// ─── Platform Connect / Bind ─────────────────────────────────────
+
+#[cfg(unix)]
+fn connect_to_address(address: &str) -> std::io::Result<UnixStream> {
+    UnixStream::connect(address)
+}
+
+#[cfg(unix)]
+fn bind_address(address: &str) -> Result<IpcListener> {
+    // Remove stale socket file before binding
+    let path = std::path::Path::new(address);
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+    let listener = UnixListener::bind(address).map_err(|e| {
         RuntimeError::with_cause(
             ErrorCode::INIT_FAILED,
-            format!("Failed to bind IPC listener on {}", transport.address),
+            format!("Failed to bind IPC listener on {address}"),
+            e,
+        )
+    })?;
+    Ok(listener)
+}
+
+#[cfg(windows)]
+fn connect_to_address(address: &str) -> std::io::Result<std::net::TcpStream> {
+    let stream = std::net::TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    Ok(stream)
+}
+
+#[cfg(windows)]
+fn bind_address(address: &str) -> Result<std::net::TcpListener> {
+    let listener = std::net::TcpListener::bind(address).map_err(|e| {
+        RuntimeError::with_cause(
+            ErrorCode::INIT_FAILED,
+            format!("Failed to bind IPC listener on {address}"),
             e,
         )
     })?;
@@ -369,7 +421,7 @@ pub fn bind_ipc_listener(transport: &IpcTransport) -> Result<TcpListener> {
 // ─── Read Exactly ────────────────────────────────────────────────
 
 fn read_exact_timeout(
-    stream: &mut TcpStream,
+    stream: &mut IpcStream,
     buf: &mut [u8],
     timeout: Duration,
 ) -> std::io::Result<()> {
@@ -405,8 +457,18 @@ fn read_exact_timeout(
 }
 
 /// Creates a test transport for in-process IPC testing.
+/// Uses a temp file path (Unix) or loopback port 0 (Windows).
 pub fn create_test_transport() -> IpcTransport {
-    IpcTransport::new(true, "127.0.0.1:0")
+    #[cfg(unix)]
+    {
+        let tmpdir = std::env::temp_dir();
+        let sock_path = tmpdir.join(format!("vibege-test-{}.sock", std::process::id()));
+        IpcTransport::new(true, sock_path.to_str().unwrap_or("/tmp/vibege-test.sock"))
+    }
+    #[cfg(windows)]
+    {
+        IpcTransport::new(true, "127.0.0.1:0")
+    }
 }
 
 #[cfg(test)]
@@ -468,40 +530,36 @@ mod tests {
     }
 
     #[test]
-    fn test_send_and_receive_via_tcp() {
-        // Start a local TCP echo server
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
+    fn test_send_and_receive_via_ipc() {
+        let transport = create_test_transport();
+        let addr = transport.address().to_string();
 
-        let server_transport = IpcTransport::new(true, &addr.to_string());
-        let server_conn = IpcConnection::new(server_transport);
-
-        // Client transport
-        let client_transport = IpcTransport::new(false, &addr.to_string());
+        let server_conn = IpcConnection::new(transport);
+        let client_transport = IpcTransport::new(false, &addr);
         let client_conn = IpcConnection::new(client_transport);
 
-        // Accept connection on a thread
+        // Bind and accept on a thread
+        let server_listener = bind_ipc_listener(&server_conn.transport).unwrap();
         std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let msg = read_message_from(
-                    &mut stream,
-                    DEFAULT_MAX_MESSAGE_SIZE,
-                    DEFAULT_TIMEOUT,
-                    server_conn.stats(),
-                )
-                .unwrap();
-                let resp = msg.response(r#"{"status":"pong"}"#);
-                write_message_to(
-                    &mut stream,
-                    &resp,
-                    DEFAULT_MAX_MESSAGE_SIZE,
-                    server_conn.stats(),
-                )
-                .unwrap();
-            }
+            let (mut stream, _) = server_listener.accept().unwrap();
+            let msg = read_message_from(
+                &mut stream,
+                DEFAULT_MAX_MESSAGE_SIZE,
+                DEFAULT_TIMEOUT,
+                server_conn.stats(),
+            )
+            .unwrap();
+            let resp = msg.response(r#"{"status":"pong"}"#);
+            write_message_to(
+                &mut stream,
+                &resp,
+                DEFAULT_MAX_MESSAGE_SIZE,
+                server_conn.stats(),
+            )
+            .unwrap();
         });
 
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(100));
 
         let ping = IpcMessage::new(MessageKind::Ping, r#"{"msg":"hello"}"#);
         let result = client_conn.send_and_receive(&ping);
@@ -514,8 +572,11 @@ mod tests {
 
     #[test]
     fn test_bind_listener() {
-        let transport = IpcTransport::new(true, "127.0.0.1:0");
+        let transport = create_test_transport();
         let listener = bind_ipc_listener(&transport).unwrap();
+        #[cfg(windows)]
+        assert!(listener.local_addr().is_ok());
+        #[cfg(unix)]
         assert!(listener.local_addr().is_ok());
     }
 }

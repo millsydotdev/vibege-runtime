@@ -36,6 +36,9 @@ impl DownloadQueue {
             downloaded_bytes: 0,
             error: None,
             retry_count: 0,
+            speed_bytes_per_sec: 0,
+            eta_secs: 0,
+            last_update: std::time::Instant::now(),
         });
     }
 
@@ -84,6 +87,34 @@ impl DownloadQueue {
             if let Some(task) = queue.get_mut(pos) {
                 task.status = DownloadStatus::Cancelled;
             }
+        }
+    }
+
+    /// Update the active download's progress with current bytes and total.
+    pub fn update_progress(&self, downloaded_bytes: u64, total_bytes: u64) {
+        let mut active = self.active.lock().expect("active lock");
+        if let Some(ref mut task) = *active {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(task.last_update).as_secs_f64();
+            let delta = downloaded_bytes.saturating_sub(task.downloaded_bytes);
+            if elapsed > 0.5 {
+                task.speed_bytes_per_sec = (delta as f64 / elapsed) as u64;
+                task.last_update = now;
+            }
+            task.downloaded_bytes = downloaded_bytes;
+            task.total_bytes = total_bytes;
+            task.progress = if total_bytes > 0 {
+                downloaded_bytes as f32 / total_bytes as f32
+            } else {
+                0.0
+            };
+            task.eta_secs = if task.speed_bytes_per_sec > 0 {
+                let remaining = total_bytes.saturating_sub(downloaded_bytes);
+                remaining / task.speed_bytes_per_sec
+            } else {
+                0
+            };
+            task.status = DownloadStatus::Downloading;
         }
     }
 

@@ -331,30 +331,31 @@ impl Scene for LibraryScene {
                         let is_fav = self.manager.collections.is_favorite(&game.name);
                         let has_update = self.manager.has_update(&game.name);
                         let fav = if is_fav { "★ " } else { "  " };
+                        let update_badge = if has_update { " ● UPDATE" } else { "" };
 
                         self.text(
                             ctx,
                             46.0,
                             y + 6.0,
-                            &format!("{}{}", fav, game.name),
+                            &format!("{}{}{}", fav, game.name, update_badge),
                             10.0,
-                            1.0,
-                            1.0,
-                            1.0,
+                            if has_update { 0.9 } else { 1.0 },
+                            if has_update { 0.7 } else { 1.0 },
+                            if has_update { 0.2 } else { 1.0 },
                         );
-
-                        if has_update {
-                            self.rect(ctx, 680.0, y + 4.0, 56.0, 14.0, 0.9, 0.7, 0.2, 0.2);
-                            self.text(ctx, 686.0, y + 5.0, "UPDATE", 7.0, 0.9, 0.7, 0.2);
-                        }
 
                         let size_str = format_file_size(game.size_bytes);
+                        let play_time = format_duration(game.total_play_time_secs);
+                        let last_played = if game.last_played > 0 {
+                            format_days_ago(game.last_played)
+                        } else {
+                            "never played".to_string()
+                        };
                         let details = format!(
-                            "v{} by {}  |  {}  |  {} plays",
-                            game.version, game.author, size_str, game.play_count
+                            "v{} by {}  |  {}  |  {}  |  {} plays  |  {}",
+                            game.version, game.author, size_str, play_time, game.play_count, last_played
                         );
                         self.text(ctx, 46.0, y + 26.0, &details, 7.0, 0.5, 0.5, 0.6);
-                        self.text(ctx, 600.0, y + 26.0, &game.entry_point, 7.0, 0.5, 0.5, 0.6);
 
                         y += card_h + 4.0;
                     }
@@ -380,5 +381,32 @@ fn format_file_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn format_duration(secs: u64) -> String {
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    }
+}
+
+fn format_days_ago(timestamp: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let diff = now.saturating_sub(timestamp);
+    let days = diff / 86400;
+    let hours = (diff % 86400) / 3600;
+    if days > 0 {
+        format!("{}d ago", days)
+    } else if hours > 0 {
+        format!("{}h ago", hours)
+    } else {
+        "recently".to_string()
     }
 }

@@ -195,6 +195,9 @@ pub struct DownloadTask {
     pub downloaded_bytes: u64,
     pub error: Option<String>,
     pub retry_count: u32,
+    pub speed_bytes_per_sec: u64,
+    pub eta_secs: u64,
+    pub last_update: std::time::Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -338,6 +341,9 @@ mod tests {
             downloaded_bytes: 0,
             error: None,
             retry_count: 0,
+            speed_bytes_per_sec: 0,
+            eta_secs: 0,
+            last_update: std::time::Instant::now(),
         };
         assert_eq!(task.status, DownloadStatus::Queued);
         assert_eq!(task.retry_count, 0);

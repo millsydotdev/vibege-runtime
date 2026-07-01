@@ -17,6 +17,9 @@ pub struct StoreScene {
     page: u32,
     active_section: usize,
     show_sections: bool,
+    /// Non-blocking download channel. When Some, a download is in progress.
+    /// Polled each frame; on completion the package is installed.
+    pending_download: Option<(String, std::sync::mpsc::Receiver<Result<Vec<u8>, String>>)>,
 }
 
 impl StoreScene {
@@ -31,6 +34,7 @@ impl StoreScene {
             page: 0,
             active_section: 0,
             show_sections: true,
+            pending_download: None,
         }
     }
 
@@ -195,19 +199,41 @@ impl Scene for StoreScene {
 
             if inp.pressed(2) {
                 if let Some(game) = games.get(self.selection) {
-                    info!("Store: installing {} ({})", game.name, game.id);
-                    match self.manager.download_package(&game.id) {
-                        Ok(data) => {
-                            if let Err(e) = self.manager.install_package(&data, &game.name) {
-                                info!("Install failed: {e}");
-                            } else {
-                                info!("Installed: {}", game.name);
-                            }
-                        }
-                        Err(e) => info!("Download failed: {e}"),
+                    if self.pending_download.is_none() {
+                        info!("Store: starting download of {} ({})", game.name, game.id);
+                        let rx = self.manager.start_download(&game.id, &game.name);
+                        self.pending_download = Some((game.name.clone(), rx));
                     }
                 }
             }
+        }
+
+        // Poll async download result (non-blocking)
+        let download_complete = self.pending_download.as_ref().and_then(|(_, rx)| match rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+        });
+
+        if let Some(result) = download_complete {
+            if let Some((name, _)) = self.pending_download.take() {
+                match result {
+                    Ok(data) => {
+                        info!("Store: download complete, installing {}", name);
+                        if let Err(e) = self.manager.install_package(&data, &name) {
+                            info!("Install failed: {e}");
+                        } else {
+                            info!("Installed: {}", name);
+                        }
+                    }
+                    Err(e) => info!("Download failed: {e}"),
+                }
+            }
+            return Ok(SceneAction::Continue);
+        }
+
+        if self.pending_download.is_some() {
+            return Ok(SceneAction::Continue);
         }
 
         Ok(SceneAction::Continue)

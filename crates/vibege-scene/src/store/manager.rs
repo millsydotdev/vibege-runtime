@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -30,6 +31,10 @@ pub struct StoreManager {
     error: Mutex<Option<String>>,
     /// Loading state.
     loading: Mutex<bool>,
+    /// Pending async download results: game_id -> Result<Vec<u8>, String>
+    pending_downloads: Mutex<HashMap<String, Result<Vec<u8>, String>>>,
+    /// Active async download handles to prevent duplicates
+    active_downloads: Mutex<Vec<String>>,
 }
 
 impl StoreManager {
@@ -43,6 +48,8 @@ impl StoreManager {
             installed_ids: Mutex::new(Vec::new()),
             error: Mutex::new(None),
             loading: Mutex::new(false),
+            pending_downloads: Mutex::new(HashMap::new()),
+            active_downloads: Mutex::new(Vec::new()),
         }
     }
 
@@ -143,7 +150,7 @@ impl StoreManager {
         *self.installed_ids.lock().expect("installed lock") = ids;
     }
 
-    /// Download a package by game ID.
+    /// Download a package by game ID (blocking — used by sync code paths).
     pub fn download_package(&self, id: &str) -> Result<Vec<u8>, String> {
         let mut data: Vec<u8> = Vec::new();
         ureq::get(&format!("{}/registry/{}/download", self.backend, id))
@@ -154,6 +161,31 @@ impl StoreManager {
             .read_to_end(&mut data)
             .map_err(|e| format!("Download read: {e}"))?;
         Ok(data)
+    }
+
+    /// Start a download in a background thread. Returns immediately.
+    /// Uses a channel-based approach to deliver the result back to the main thread.
+    pub fn start_download(&self, game_id: &str, _game_name: &str) -> std::sync::mpsc::Receiver<Result<Vec<u8>, String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let backend = self.backend.clone();
+        let id = game_id.to_string();
+
+        std::thread::spawn(move || {
+            let mut data: Vec<u8> = Vec::new();
+            let result = (|| -> Result<Vec<u8>, String> {
+                ureq::get(&format!("{}/registry/{}/download", backend, id))
+                    .call()
+                    .map_err(|e| format!("Download HTTP: {e}"))?
+                    .into_body()
+                    .into_reader()
+                    .read_to_end(&mut data)
+                    .map_err(|e| format!("Download read: {e}"))?;
+                Ok(data)
+            })();
+            let _ = tx.send(result);
+        });
+
+        rx
     }
 
     pub fn install_package(&self, data: &[u8], name: &str) -> Result<(), String> {

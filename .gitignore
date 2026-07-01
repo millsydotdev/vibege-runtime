@@ -13,9 +13,8 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
+# Environment (all variants)
+.env*
 
 # Runtime
 *.log

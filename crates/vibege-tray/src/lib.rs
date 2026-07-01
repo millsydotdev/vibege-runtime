@@ -37,6 +37,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHOW_LAUNCHER: AtomicBool = AtomicBool::new(false);
 static TOGGLE_OVERLAY: AtomicBool = AtomicBool::new(false);
+static TOGGLE_WEBVIEW: AtomicBool = AtomicBool::new(false);
 static QUIT: AtomicBool = AtomicBool::new(false);
 static RESTART: AtomicBool = AtomicBool::new(false);
 
@@ -91,6 +92,16 @@ pub fn should_toggle_overlay() -> bool {
 /// Signal the overlay to toggle.
 pub fn request_toggle() {
     TOGGLE_OVERLAY.store(true, Ordering::SeqCst);
+}
+
+/// Signal the web UI to toggle.
+pub fn request_toggle_webview() {
+    TOGGLE_WEBVIEW.store(true, Ordering::SeqCst);
+}
+
+/// Check if the web UI toggle was requested (consumes the signal).
+pub fn should_toggle_webview() -> bool {
+    TOGGLE_WEBVIEW.swap(false, Ordering::SeqCst)
 }
 
 /// Check if a restart is requested (consumes the signal).
@@ -186,6 +197,7 @@ fn tray_loop() {
     const IDM_RESTART: u16 = 103;
     const IDM_LOGS: u16 = 104;
     const IDM_ABOUT: u16 = 105;
+    const IDM_WEBUI: u16 = 106;
     const IDM_QUIT: u16 = 199;
 
     fn to_wide(s: &str) -> Vec<u16> {
@@ -291,6 +303,13 @@ fn tray_loop() {
                         AppendMenuW(
                             menu,
                             MF_STRING,
+                            IDM_WEBUI as usize,
+                            to_wide("Web UI (Store)\0").as_ptr(),
+                        );
+                        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+                        AppendMenuW(
+                            menu,
+                            MF_STRING,
                             IDM_RESTART as usize,
                             to_wide("Restart Runtime\0").as_ptr(),
                         );
@@ -335,6 +354,7 @@ fn tray_loop() {
                 match id as u16 {
                     IDM_LAUNCHER => SHOW_LAUNCHER.store(true, Ordering::SeqCst),
                     IDM_TOGGLE => TOGGLE_OVERLAY.store(true, Ordering::SeqCst),
+                    IDM_WEBUI => TOGGLE_WEBVIEW.store(true, Ordering::SeqCst),
                     IDM_RESTART => RESTART.store(true, Ordering::SeqCst),
                     IDM_LOGS => {
                         // Open log directory — rate-limited to once per 2 seconds

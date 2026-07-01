@@ -22,6 +22,8 @@ use winit::dpi::LogicalSize;
 use winit::event::Event;
 use winit::event_loop::EventLoop;
 
+mod webui;
+
 #[derive(Parser)]
 #[command(
     name = "vibege-runtime",
@@ -100,10 +102,24 @@ fn main() -> anyhow::Result<()> {
 
     // ── Event Bus ──
     let event_bus = Arc::new(EventBus::new());
-    event_bus.subscribe_with_priority(SubscriberPriority::Monitor, move |ev| {
+    event_bus.subscribe_with_priority(SubscriberPriority::Monitor, |ev| {
         info!("Event: {ev:?}");
     });
     event_bus.publish(&RuntimeEvent::WindowCreated);
+
+    // ── Embedded WebView UI ──
+    let webview_handle = Arc::new(Mutex::new(webui::WebViewHandle::new(
+        Arc::clone(&cfg),
+        Some(Arc::clone(&event_bus)),
+    )));
+    {
+        let mut wh = webview_handle.lock().expect("webview lock");
+        if let Err(e) = wh.init(&*window) {
+            warn!("Webview init failed (non-fatal): {e}");
+        } else {
+            info!("Webview active — Ctrl+Shift+U to toggle");
+        }
+    }
 
     // ── Periodic diagnostics publishing ──
     let diag_bus = Arc::clone(&event_bus);
@@ -250,7 +266,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Event::AboutToWait => {
-                poll_overlay_hotkey(&cfg, overlay_manager.is_visible());
+                poll_hotkeys(&cfg, overlay_manager.is_visible());
 
                 if vibege_tray::should_show_launcher() {
                     window.set_visible(true);
@@ -269,6 +285,11 @@ fn main() -> anyhow::Result<()> {
                         &RuntimeEvent::OverlayHidden
                     });
                     save_overlay_state(&cfg, &overlay_manager);
+                }
+                if vibege_tray::should_toggle_webview() {
+                    let mut wh = webview_handle.lock().expect("webview lock");
+                    wh.toggle();
+                    info!(visible = wh.is_visible(), "Webview toggled");
                 }
                 if vibege_tray::should_restart() {
                     info!("Restart requested from tray");
@@ -345,8 +366,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[allow(unused_variables)]
-fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool) {
-    static mut PREVIOUSLY_DOWN: bool = false;
+fn poll_hotkeys(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool) {
+    static mut OVERLAY_PREV: bool = false;
+    static mut WEBUI_PREV: bool = false;
 
     #[cfg(target_os = "windows")]
     {
@@ -362,6 +384,8 @@ fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool
             let ctrl_pressed = GetAsyncKeyState(0x11);
             let shift_pressed = GetAsyncKeyState(0x10);
             let alt_pressed = GetAsyncKeyState(0x12);
+
+            // Overlay toggle: Ctrl+Shift+<configurable key> (default V)
             let vk = match k_key.as_str() {
                 "v" => 0x56,
                 "g" => 0x47,
@@ -372,15 +396,23 @@ fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool
                 _ => 0x56,
             };
             let key_pressed = GetAsyncKeyState(vk);
-            let currently_down = (!mc || (ctrl_pressed as i16) < 0)
+            let overlay_down = (!mc || (ctrl_pressed as i16) < 0)
                 && (!ms || (shift_pressed as i16) < 0)
                 && (!ma || (alt_pressed as i16) < 0)
                 && (key_pressed as i16) < 0;
-            // Edge detection: only fire on transition from up → down
-            if currently_down && !PREVIOUSLY_DOWN {
+            if overlay_down && !OVERLAY_PREV {
                 vibege_tray::request_toggle();
             }
-            PREVIOUSLY_DOWN = currently_down;
+            OVERLAY_PREV = overlay_down;
+
+            // Web UI toggle: Ctrl+Shift+U (hard-coded for now)
+            let u_down = (ctrl_pressed as i16) < 0
+                && (shift_pressed as i16) < 0
+                && (GetAsyncKeyState(0x55) as i16) < 0;
+            if u_down && !WEBUI_PREV {
+                vibege_tray::request_toggle_webview();
+            }
+            WEBUI_PREV = u_down;
         }
     }
 

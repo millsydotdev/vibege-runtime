@@ -157,6 +157,9 @@ pub struct OverlayConfig {
     /// Whether the overlay was visible when last saved.
     #[serde(default)]
     pub last_visible: bool,
+    /// HWND of the target window to overlay on top of (empty = free float).
+    #[serde(default)]
+    pub target_hwnd: String,
 }
 
 fn default_hotkey_mod() -> String {
@@ -188,6 +191,7 @@ impl Default for OverlayConfig {
             last_y: 0,
             last_monitor: String::new(),
             last_visible: false,
+            target_hwnd: String::new(),
         }
     }
 }

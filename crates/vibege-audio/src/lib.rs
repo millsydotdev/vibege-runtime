@@ -55,11 +55,13 @@ mod engine;
 mod handle;
 mod mixer;
 mod sound_cache;
+mod wav;
 
 pub use engine::AudioSystem;
 pub use handle::{PlaybackHandle, PlaybackState};
 pub use mixer::{ChannelKind, Mixer};
 pub use sound_cache::{SoundCache, SoundData};
+pub use wav::parse_wav;
 
 use thiserror::Error;
 
@@ -78,6 +80,8 @@ pub enum AudioError {
     UnsupportedFormat(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("WAV error: {0}")]
+    WavError(String),
 }
 
 /// Generate a test tone as an i16 sample buffer.

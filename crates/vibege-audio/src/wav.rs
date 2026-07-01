@@ -60,8 +60,7 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, AudioError> {
                 data[offset + 14],
                 data[offset + 15],
             ]);
-            bits_per_sample =
-                u16::from_le_bytes([data[offset + 22], data[offset + 23]]);
+            bits_per_sample = u16::from_le_bytes([data[offset + 22], data[offset + 23]]);
             if channels != 1 && channels != 2 {
                 return Err(AudioError::WavError("Only mono/stereo supported".into()));
             }
@@ -73,13 +72,18 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, AudioError> {
 
         if chunk_id == b"data" {
             if !fmt_found {
-                return Err(AudioError::WavError("fmt chunk must come before data".into()));
+                return Err(AudioError::WavError(
+                    "fmt chunk must come before data".into(),
+                ));
             }
             let data_start = offset + 8;
             let data_end = (data_start + chunk_size).min(data.len());
             let raw = &data[data_start..data_end];
             let samples = samples_from_bytes(raw, channels as usize, bits_per_sample);
-            return Ok(WavData { samples, sample_rate });
+            return Ok(WavData {
+                samples,
+                sample_rate,
+            });
         }
 
         // Skip to next chunk (padding byte if odd size)
@@ -142,11 +146,11 @@ mod tests {
         // fmt chunk
         wav.extend(b"fmt ");
         wav.extend(&16u32.to_le_bytes()); // chunk size
-        wav.extend(&1u16.to_le_bytes());  // PCM
-        wav.extend(&1u16.to_le_bytes());  // mono
+        wav.extend(&1u16.to_le_bytes()); // PCM
+        wav.extend(&1u16.to_le_bytes()); // mono
         wav.extend(&44100u32.to_le_bytes()); // sample rate
         wav.extend(&(88200u32).to_le_bytes()); // byte rate
-        wav.extend(&2u16.to_le_bytes());  // block align
+        wav.extend(&2u16.to_le_bytes()); // block align
         wav.extend(&16u16.to_le_bytes()); // bits per sample
         // data chunk
         wav.extend(b"data");
@@ -184,8 +188,8 @@ mod tests {
         wav.extend(b"data");
         wav.extend(&(data_size as u32).to_le_bytes());
         for i in 0..sample_count {
-            let s = (f32::sin(2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0)
-                * 16000.0) as i16;
+            let s = (f32::sin(2.0 * std::f32::consts::PI * 440.0 * i as f32 / 44100.0) * 16000.0)
+                as i16;
             wav.extend(&s.to_le_bytes()); // left
             wav.extend(&s.to_le_bytes()); // right
         }

@@ -107,9 +107,10 @@ impl Scene for GameScene {
             Ok(()) => Ok(SceneAction::Continue),
             Err(e) => {
                 info!(game = %self.game_name, "Game exited: {e}");
-                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(
-                    &format!("{} exited: {}", self.game_name, e),
-                ))))
+                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(&format!(
+                    "{} exited: {}",
+                    self.game_name, e
+                )))))
             }
         }
     }
@@ -122,9 +123,10 @@ impl Scene for GameScene {
             Ok(()) => Ok(SceneAction::Continue),
             Err(e) => {
                 info!(game = %self.game_name, "Game render exited: {e}");
-                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(
-                    &format!("{} render error: {}", self.game_name, e),
-                ))))
+                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(&format!(
+                    "{} render error: {}",
+                    self.game_name, e
+                )))))
             }
         }
     }

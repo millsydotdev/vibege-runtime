@@ -158,7 +158,11 @@ impl StoreManager {
 
     /// Start a download in a background thread. Returns immediately.
     /// Uses a channel-based approach to deliver the result back to the main thread.
-    pub fn start_download(&self, game_id: &str, _game_name: &str) -> std::sync::mpsc::Receiver<Result<Vec<u8>, String>> {
+    pub fn start_download(
+        &self,
+        game_id: &str,
+        _game_name: &str,
+    ) -> std::sync::mpsc::Receiver<Result<Vec<u8>, String>> {
         let (tx, rx) = std::sync::mpsc::channel();
         let backend = self.backend.clone();
         let id = game_id.to_string();

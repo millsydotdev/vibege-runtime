@@ -92,10 +92,43 @@ impl Scene for StoreScene {
         let inp = InputState::new(
             &ctx.input,
             &[
-                "up", "down", "enter", "escape", "s", "r", "left", "right", "f5",
-                "a","b","c","d","e","f","g","h","i","j","k","l","m",
-                "n","o","p","q","r","s","t","u","v","w","x","y","z",
-                "space", "backspace",
+                "up",
+                "down",
+                "enter",
+                "escape",
+                "s",
+                "r",
+                "left",
+                "right",
+                "f5",
+                "a",
+                "b",
+                "c",
+                "d",
+                "e",
+                "f",
+                "g",
+                "h",
+                "i",
+                "j",
+                "k",
+                "l",
+                "m",
+                "n",
+                "o",
+                "p",
+                "q",
+                "r",
+                "s",
+                "t",
+                "u",
+                "v",
+                "w",
+                "x",
+                "y",
+                "z",
+                "space",
+                "backspace",
             ],
         );
 
@@ -209,11 +242,14 @@ impl Scene for StoreScene {
         }
 
         // Poll async download result (non-blocking)
-        let download_complete = self.pending_download.as_ref().and_then(|(_, rx)| match rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
-        });
+        let download_complete =
+            self.pending_download
+                .as_ref()
+                .and_then(|(_, rx)| match rx.try_recv() {
+                    Ok(r) => Some(r),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+                });
 
         if let Some(result) = download_complete {
             if let Some((name, _)) = self.pending_download.take() {

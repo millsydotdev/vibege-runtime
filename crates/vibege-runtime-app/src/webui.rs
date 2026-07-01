@@ -9,9 +9,9 @@ use std::sync::Mutex;
 
 use serde_json::json;
 use tracing::info;
-use wry::WebView;
 use vibege_config::ConfigHandle;
 use vibege_core::{EventBus, RuntimeEvent};
+use wry::WebView;
 
 use raw_window_handle::HasWindowHandle;
 
@@ -76,8 +76,12 @@ impl WebViewHandle {
         }
     }
 
-    pub fn is_visible(&self) -> bool { self.visible }
-    pub fn toggle(&mut self) { self.set_visible(!self.visible); }
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+    pub fn toggle(&mut self) {
+        self.set_visible(!self.visible);
+    }
 }
 
 fn handle_ipc(
@@ -85,8 +89,12 @@ fn handle_ipc(
     config: &ConfigHandle,
     event_bus: &Option<Arc<EventBus>>,
 ) -> serde_json::Value {
-    let parsed: serde_json::Value = serde_json::from_str(request).unwrap_or(json!({"path": request}));
-    let path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or(request);
+    let parsed: serde_json::Value =
+        serde_json::from_str(request).unwrap_or(json!({"path": request}));
+    let path = parsed
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or(request);
     let data = parsed.get("data");
 
     match path {
@@ -100,18 +108,18 @@ fn handle_ipc(
         p if p.starts_with("/api/launch/") => {
             let name = p.trim_start_matches("/api/launch/");
             if let Some(bus) = event_bus {
-                bus.publish(&RuntimeEvent::GameStarted { name: name.to_string() });
+                bus.publish(&RuntimeEvent::GameStarted {
+                    name: name.to_string(),
+                });
             }
             json!({"success": true})
         }
 
         // ── List store games (fetch from backend API) ──
-        "/api/list-store" => {
-            match list_store_games(config) {
-                Ok(games) => json!({"games": games, "total": games.len()}),
-                Err(e) => json!({"error": e, "games": [], "total": 0}),
-            }
-        }
+        "/api/list-store" => match list_store_games(config) {
+            Ok(games) => json!({"games": games, "total": games.len()}),
+            Err(e) => json!({"error": e, "games": [], "total": 0}),
+        },
 
         // ── Install a game from the store ──
         "/api/install" => {
@@ -172,7 +180,7 @@ fn handle_ipc(
             json!({"version": env!("CARGO_PKG_VERSION"), "name": "VibeGE Runtime"})
         }
 
-        _ => json!({"error": "Not found"})
+        _ => json!({"error": "Not found"}),
     }
 }
 
@@ -188,7 +196,8 @@ fn scan_installed_games(config: &ConfigHandle) -> Vec<serde_json::Value> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
@@ -239,16 +248,31 @@ fn list_store_games(config: &ConfigHandle) -> Result<Vec<serde_json::Value>, Str
     let body: serde_json::Value = serde_json::from_str(&body_str)
         .map_err(|e| format!("Failed to parse store response: {e}"))?;
 
-    let packages = body.get("packages").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    let packages = body
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .cloned()
+        .unwrap_or_default();
     let installed = scan_installed_games(config);
-    let installed_ids: Vec<String> = installed.iter()
+    let installed_ids: Vec<String> = installed
+        .iter()
         .filter_map(|g| g.get("id").and_then(|v| v.as_str()).map(String::from))
         .collect();
 
     let mut result = Vec::new();
     for pkg in packages {
-        let id = pkg.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let already_installed = installed_ids.contains(&id) || installed_ids.contains(&pkg.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase());
+        let id = pkg
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let already_installed = installed_ids.contains(&id)
+            || installed_ids.contains(
+                &pkg.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase(),
+            );
         result.push(json!({
             "id": id,
             "name": pkg.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown"),
@@ -280,15 +304,14 @@ fn install_game(config: &ConfigHandle, game_id: &str, game_name: &str) -> Result
 
     // Extract .vibepkg (ZIP) to the installed games directory
     let install_dir = vibege_config::installed_games_dir().join(sanitize_name(game_name));
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("Create dir failed: {e}"))?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| format!("Create dir failed: {e}"))?;
 
     let cursor = std::io::Cursor::new(&data);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| format!("Invalid package: {e}"))?;
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid package: {e}"))?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
+        let mut entry = archive
+            .by_index(i)
             .map_err(|e| format!("Zip entry {i}: {e}"))?;
         if entry.is_dir() {
             continue;
@@ -300,10 +323,10 @@ fn install_game(config: &ConfigHandle, game_id: &str, game_name: &str) -> Result
             std::fs::create_dir_all(parent).ok();
         }
         let mut content = Vec::new();
-        entry.read_to_end(&mut content)
+        entry
+            .read_to_end(&mut content)
             .map_err(|e| format!("Read entry {i}: {e}"))?;
-        std::fs::write(&out_path, &content)
-            .map_err(|e| format!("Write {name}: {e}"))?;
+        std::fs::write(&out_path, &content).map_err(|e| format!("Write {name}: {e}"))?;
     }
 
     info!("Installed {} to {:?}", game_name, install_dir);
@@ -312,7 +335,13 @@ fn install_game(config: &ConfigHandle, game_id: &str, game_name: &str) -> Result
 
 fn sanitize_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -322,17 +351,23 @@ fn enumerate_windows() -> Vec<serde_json::Value> {
     {
         use windows_sys::Win32::Foundation::HWND;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowTextW, GetWindowTextLengthW, IsWindowVisible,
+            EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
         };
 
         unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: isize) -> i32 {
-            if IsWindowVisible(hwnd) == 0 { return 1 }
+            if IsWindowVisible(hwnd) == 0 {
+                return 1;
+            }
             let len = GetWindowTextLengthW(hwnd);
-            if len == 0 { return 1 }
+            if len == 0 {
+                return 1;
+            }
             let mut buf = vec![0u16; (len + 1) as usize];
             let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), len + 1);
             let title = String::from_utf16_lossy(&buf[..n as usize]);
-            if title.contains("VibeGE") { return 1 }
+            if title.contains("VibeGE") {
+                return 1;
+            }
             let w = &mut *(lparam as *mut Vec<serde_json::Value>);
             w.push(json!({"hwnd": format!("{:#x}", hwnd as u64), "title": title}));
             1

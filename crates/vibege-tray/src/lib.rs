@@ -372,7 +372,8 @@ fn tray_loop() {
                                 let log_dir = std::env::current_dir()
                                     .unwrap_or_else(|_| std::path::PathBuf::from("."))
                                     .join("logs");
-                                let _ = std::process::Command::new("explorer").arg(&log_dir).spawn();
+                                let _ =
+                                    std::process::Command::new("explorer").arg(&log_dir).spawn();
                             }
                         }
                     }

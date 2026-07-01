@@ -1119,12 +1119,7 @@ impl Renderer {
                     continue;
                 }
 
-                pass.set_vertex_buffer(
-                    0,
-                    staging
-                        .vb
-                        .slice((sv * std::mem::size_of::<SpriteVertex>()) as BufferAddress..),
-                );
+                pass.set_vertex_buffer(0, staging.vb.slice(..));
                 pass.set_index_buffer(
                     staging
                         .ib

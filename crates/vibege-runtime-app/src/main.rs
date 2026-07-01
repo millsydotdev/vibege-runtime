@@ -318,34 +318,43 @@ fn main() -> anyhow::Result<()> {
                 let dt = now.duration_since(last_frame).as_secs_f64();
                 last_frame = now;
 
-                let action = match scene_manager.update(&mut scene_ctx, dt) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        warn!("Scene update: {e}");
-                        return;
+                // When the webview is visible, skip native scene rendering
+                // (update still runs for background processing)
+                let webview_active = webview_handle.lock().map(|wh| wh.is_visible()).unwrap_or(false);
+
+                if !webview_active {
+                    let action = match scene_manager.update(&mut scene_ctx, dt) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            warn!("Scene update: {e}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = scene_manager.apply(action, &mut scene_ctx) {
+                        warn!("Navigation: {e}");
                     }
-                };
-                if let Err(e) = scene_manager.apply(action, &mut scene_ctx) {
-                    warn!("Navigation: {e}");
-                }
-                if let Err(e) = scene_manager.process_pending(&mut scene_ctx) {
-                    warn!("Pending nav: {e}");
+                    if let Err(e) = scene_manager.process_pending(&mut scene_ctx) {
+                        warn!("Pending nav: {e}");
+                    }
+
+                    let action = match scene_manager.render(&mut scene_ctx) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            warn!("Scene render: {e}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = scene_manager.apply(action, &mut scene_ctx) {
+                        warn!("Navigation: {e}");
+                    }
+                    if let Err(e) = scene_manager.process_pending(&mut scene_ctx) {
+                        warn!("Pending nav: {e}");
+                    }
                 }
 
-                let action = match scene_manager.render(&mut scene_ctx) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        warn!("Scene render: {e}");
-                        return;
-                    }
-                };
-                if let Err(e) = scene_manager.apply(action, &mut scene_ctx) {
-                    warn!("Navigation: {e}");
+                if webview_active {
+                    renderer.set_clear(0.04, 0.04, 0.06, 1.0); // match webview background
                 }
-                if let Err(e) = scene_manager.process_pending(&mut scene_ctx) {
-                    warn!("Pending nav: {e}");
-                }
-
                 if let Err(e) = renderer.render() {
                     error!("GPU: {e}");
                 }

@@ -160,9 +160,7 @@ impl GameSession {
 /// Remove dangerous global functions from the Lua environment.
 fn sandbox_lua(lua: &mlua::Lua) {
     let globals = lua.globals();
-    let dangerous = [
-        "io", "loadfile", "dofile", "require", "package", "debug",
-    ];
+    let dangerous = ["io", "loadfile", "dofile", "require", "package", "debug"];
     for name in &dangerous {
         globals.set(*name, mlua::Value::Nil).ok();
     }

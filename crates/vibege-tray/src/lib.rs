@@ -337,10 +337,23 @@ fn tray_loop() {
                     IDM_TOGGLE => TOGGLE_OVERLAY.store(true, Ordering::SeqCst),
                     IDM_RESTART => RESTART.store(true, Ordering::SeqCst),
                     IDM_LOGS => {
-                        // Open log directory — platform-specific
+                        // Open log directory — rate-limited to once per 2 seconds
                         #[cfg(windows)]
                         {
-                            let _ = std::process::Command::new("explorer").arg(".").spawn();
+                            use std::sync::atomic::AtomicU64;
+                            use std::sync::atomic::Ordering;
+                            static LAST_LOG_OPEN: AtomicU64 = AtomicU64::new(0);
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            if now - LAST_LOG_OPEN.load(Ordering::Relaxed) > 2 {
+                                LAST_LOG_OPEN.store(now, Ordering::Relaxed);
+                                let log_dir = std::env::current_dir()
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                                    .join("logs");
+                                let _ = std::process::Command::new("explorer").arg(&log_dir).spawn();
+                            }
                         }
                     }
                     IDM_ABOUT => {
@@ -373,8 +386,8 @@ fn tray_loop() {
     unsafe fn process_tray_updates(hwnd: HWND, id_tray: u32, _wm_tray: u32) {
         use windows_sys::Win32::UI::Shell::NIF_INFO;
 
-        if let Ok(state) = TRAY_STATE.lock()
-            && let Some(ref s) = *state
+        if let Ok(mut state) = TRAY_STATE.lock()
+            && let Some(ref mut s) = *state
         {
             // Update tooltip based on status
             let tooltip = format!("VibeGE — {}", s.status);
@@ -389,7 +402,7 @@ fn tray_loop() {
             }
             Shell_NotifyIconW(NIM_MODIFY, &nid);
 
-            // Show pending notification
+            // Show pending notification (one-shot, then clear)
             if let Some((ref title, ref message)) = s.notification {
                 let mut nid = std::mem::zeroed::<NOTIFYICONDATAW>();
                 nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -406,6 +419,7 @@ fn tray_loop() {
                     nid.szInfo[i] = c;
                 }
                 Shell_NotifyIconW(NIM_MODIFY, &nid);
+                s.notification = None;
             }
         }
     }

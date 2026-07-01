@@ -73,7 +73,8 @@ impl Scene for StoreScene {
         SceneId::Store
     }
 
-    fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
+    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
+        ctx.input.lock().expect("lock").end_frame();
         info!("StoreScene: fetching from {}", self.manager.backend_url());
         self.manager.fetch(0);
         Ok(SceneAction::Continue)
@@ -88,6 +89,9 @@ impl Scene for StoreScene {
             &ctx.input,
             &[
                 "up", "down", "enter", "escape", "s", "r", "left", "right", "f5",
+                "a","b","c","d","e","f","g","h","i","j","k","l","m",
+                "n","o","p","q","r","s","t","u","v","w","x","y","z",
+                "space", "backspace",
             ],
         );
 
@@ -116,39 +120,23 @@ impl Scene for StoreScene {
         }
 
         if self.search_mode {
-            if inp.pressed(0)
-            /* up */
-            {
-                let c = self.search_text.chars().last().unwrap_or('a');
-                let next = match c {
-                    'a'..='y' => ((c as u8) + 1) as char,
-                    'z' => ' ',
-                    ' ' => 'a',
-                    _ => 'a',
-                };
-                if self.search_cursor == 0 {
-                    self.search_text = next.to_string();
-                } else {
-                    self.search_text.pop();
-                    self.search_text.push(next);
+            let letters = "abcdefghijklmnopqrstuvwxyz";
+            for i in 0..26 {
+                if inp.pressed(10 + i) {
+                    let c = letters.as_bytes()[i] as char;
+                    if self.search_cursor < 32 {
+                        self.search_text.insert(self.search_cursor, c);
+                        self.search_cursor += 1;
+                    }
                 }
             }
-            if inp.pressed(1)
-            /* down */
-            {
-                let c = self.search_text.chars().last().unwrap_or('a');
-                let prev = match c {
-                    'b'..='z' => ((c as u8) - 1) as char,
-                    'a' => ' ',
-                    ' ' => 'z',
-                    _ => 'a',
-                };
-                if self.search_cursor == 0 {
-                    self.search_text = prev.to_string();
-                } else {
-                    self.search_text.pop();
-                    self.search_text.push(prev);
-                }
+            if inp.pressed(38) && self.search_cursor < 32 {
+                self.search_text.insert(self.search_cursor, ' ');
+                self.search_cursor += 1;
+            }
+            if inp.pressed(39) && self.search_cursor > 0 {
+                self.search_cursor -= 1;
+                self.search_text.remove(self.search_cursor);
             }
             if inp.pressed(2) && !self.search_text.is_empty() {
                 let q = SearchQuery {
@@ -158,6 +146,14 @@ impl Scene for StoreScene {
                 };
                 let _results = self.manager.search(&q);
                 self.show_sections = false;
+            }
+            if inp.pressed(6) {
+                self.search_cursor = self.search_cursor.saturating_sub(1);
+            }
+            if inp.pressed(7) {
+                if self.search_cursor < self.search_text.len() {
+                    self.search_cursor += 1;
+                }
             }
             return Ok(SceneAction::Continue);
         }

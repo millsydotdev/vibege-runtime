@@ -346,6 +346,8 @@ fn main() -> anyhow::Result<()> {
 
 #[allow(unused_variables)]
 fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool) {
+    static mut PREVIOUSLY_DOWN: bool = false;
+
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -370,15 +372,20 @@ fn poll_overlay_hotkey(cfg: &vibege_config::ConfigHandle, _overlay_visible: bool
                 _ => 0x56,
             };
             let key_pressed = GetAsyncKeyState(vk);
-            if (!mc || (ctrl_pressed as i16) < 0)
+            let currently_down = (!mc || (ctrl_pressed as i16) < 0)
                 && (!ms || (shift_pressed as i16) < 0)
                 && (!ma || (alt_pressed as i16) < 0)
-                && (key_pressed as i16) < 0
-            {
+                && (key_pressed as i16) < 0;
+            // Edge detection: only fire on transition from up → down
+            if currently_down && !PREVIOUSLY_DOWN {
                 vibege_tray::request_toggle();
             }
+            PREVIOUSLY_DOWN = currently_down;
         }
     }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = cfg;
 }
 
 fn load_overlay_state(cfg: &vibege_config::ConfigHandle) -> Option<OverlayPersistentState> {

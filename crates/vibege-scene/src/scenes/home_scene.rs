@@ -218,6 +218,11 @@ impl Scene for HomeScene {
         Ok(SceneAction::Continue)
     }
 
+    fn on_resume(&mut self, ctx: &mut SceneContext) -> SceneResult {
+        ctx.input.lock().expect("lock").end_frame();
+        Ok(SceneAction::Continue)
+    }
+
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
         let inp = InputState::new(
             &ctx.input,

@@ -3,6 +3,7 @@
 
 local ball_x, ball_y = 400, 200
 local ball_dx, ball_dy = 3, -2
+local paddle_x = 100
 local paddle_y = 280
 local paddle_w = 80
 local paddle_h = 10
@@ -19,10 +20,10 @@ function init()
 end
 
 function update(dt)
-    -- Paddle movement
-    if vibege.input.is_key_down("left") then paddle_y = paddle_y - 4 end
-    if vibege.input.is_key_down("right") then paddle_y = paddle_y + 4 end
-    paddle_y = math.max(0, math.min(800 - paddle_w, paddle_y))
+    -- Paddle movement (left/right)
+    if vibege.input.is_key_down("left") then paddle_x = paddle_x - 4 end
+    if vibege.input.is_key_down("right") then paddle_x = paddle_x + 4 end
+    paddle_x = math.max(0, math.min(800 - paddle_w, paddle_x))
 
     -- Ball movement
     ball_x = ball_x + ball_dx
@@ -34,7 +35,7 @@ function update(dt)
 
     -- Paddle bounce
     if ball_y >= paddle_y - 8 and ball_y <= paddle_y + paddle_h
-       and ball_x >= 100 - 8 and ball_x <= 100 + paddle_w + 8
+       and ball_x >= paddle_x - 8 and ball_x <= paddle_x + paddle_w + 8
     then
         ball_dy = -ball_dy
         score = score + 1
@@ -60,8 +61,8 @@ function render()
     -- Ball
     vibege.render.draw_rect(ball_x, ball_y, 10, 10, BALL[1], BALL[2], BALL[3], 1)
 
-    -- Paddle
-    vibege.render.draw_rect(100, paddle_y, paddle_w, paddle_h, PADDLE[1], PADDLE[2], PADDLE[3], 1)
+    -- Paddle (use paddle_x instead of hard-coded 100)
+    vibege.render.draw_rect(paddle_x, paddle_y, paddle_w, paddle_h, PADDLE[1], PADDLE[2], PADDLE[3], 1)
 
     -- Score
     local score_str = "Score: " .. tostring(score)

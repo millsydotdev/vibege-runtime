@@ -82,28 +82,15 @@ impl FirstRunScene {
     }
 
     fn save(&self, ctx: &mut SceneContext) {
-        ctx.config.set(vibege_config::VibegeConfig {
-            overlay: vibege_config::OverlayConfig {
-                hotkey_modifiers: self.hotkey_mod.clone(),
-                hotkey_key: self.hotkey_key.clone(),
-                position: self.position.clone(),
-                width: 800,
-                height: 600,
-                ..Default::default()
-            },
-            audio: vibege_config::AudioConfig {
-                volume: self.volume,
-                ..Default::default()
-            },
-            general: vibege_config::GeneralConfig {
-                startup_behavior: self.startup.clone(),
-                performance_mode: self.perf.clone(),
-                first_run_complete: true,
-                backend_url: "http://localhost:3000/api/v1".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+        let mut cfg = ctx.config.get();
+        cfg.overlay.hotkey_modifiers = self.hotkey_mod.clone();
+        cfg.overlay.hotkey_key = self.hotkey_key.clone();
+        cfg.overlay.position = self.position.clone();
+        cfg.audio.volume = self.volume;
+        cfg.general.startup_behavior = self.startup.clone();
+        cfg.general.performance_mode = self.perf.clone();
+        cfg.general.first_run_complete = true;
+        ctx.config.set(cfg);
     }
 
     fn draw_step_dots(&self, ctx: &mut SceneContext) {
@@ -123,8 +110,9 @@ impl Scene for FirstRunScene {
         SceneId::FirstRun
     }
 
-    fn on_create(&mut self, _ctx: &mut SceneContext) -> SceneResult {
-        info!("FirstRunScene: 7-step wizard started");
+    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
+        ctx.input.lock().expect("lock").end_frame();
+        info!("FirstRunScene: starting 7-step wizard");
         Ok(SceneAction::Continue)
     }
 

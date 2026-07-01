@@ -152,7 +152,7 @@ impl GameSession {
 fn sandbox_lua(lua: &mlua::Lua) {
     let globals = lua.globals();
     let dangerous = [
-        "io", "os", "loadfile", "dofile", "require", "package", "debug",
+        "io", "loadfile", "dofile", "require", "package", "debug",
     ];
     for name in &dangerous {
         globals.set(*name, mlua::Value::Nil).ok();

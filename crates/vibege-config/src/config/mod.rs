@@ -326,7 +326,7 @@ impl Default for GeneralConfig {
 impl Validate for GeneralConfig {
     fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
-        let valid_startup = ["hidden", "shown", "minimised"];
+        let valid_startup = ["hidden", "shown", "minimised", "minimized"];
         if !valid_startup.contains(&self.startup_behavior.as_str()) {
             errors.push(format!(
                 "general.startup_behavior '{}' not in {:?}",
@@ -361,9 +361,11 @@ impl Validate for GeneralConfig {
     }
 
     fn sanitize(&mut self) {
-        let valid_startup = ["hidden", "shown", "minimised"];
+        let valid_startup = ["hidden", "shown", "minimised", "minimized"];
         if !valid_startup.contains(&self.startup_behavior.as_str()) {
             self.startup_behavior = default_startup();
+        } else if self.startup_behavior == "minimized" {
+            self.startup_behavior = "minimised".to_string();
         }
         let valid_perf = ["battery", "balanced", "performance"];
         if !valid_perf.contains(&self.performance_mode.as_str()) {

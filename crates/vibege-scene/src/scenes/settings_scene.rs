@@ -83,28 +83,15 @@ impl SettingsScene {
     }
 
     fn save(&mut self, ctx: &mut SceneContext) {
-        ctx.config.set(vibege_config::VibegeConfig {
-            overlay: vibege_config::OverlayConfig {
-                hotkey_modifiers: self.hotkey_mod.clone(),
-                hotkey_key: self.hotkey_key.clone(),
-                position: self.position.clone(),
-                width: 800,
-                height: 600,
-                ..Default::default()
-            },
-            audio: vibege_config::AudioConfig {
-                volume: self.volume,
-                ..Default::default()
-            },
-            general: vibege_config::GeneralConfig {
-                startup_behavior: self.startup.clone(),
-                performance_mode: self.perf.clone(),
-                first_run_complete: true,
-                backend_url: "http://localhost:3000/api/v1".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+        let mut cfg = ctx.config.get();
+        cfg.overlay.hotkey_modifiers = self.hotkey_mod.clone();
+        cfg.overlay.hotkey_key = self.hotkey_key.clone();
+        cfg.overlay.position = self.position.clone();
+        cfg.audio.volume = self.volume;
+        cfg.general.startup_behavior = self.startup.clone();
+        cfg.general.performance_mode = self.perf.clone();
+        cfg.general.first_run_complete = true;
+        ctx.config.set(cfg);
         self.dirty = false;
         info!("Settings saved");
     }
@@ -125,6 +112,7 @@ impl Scene for SettingsScene {
     }
 
     fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
+        ctx.input.lock().expect("lock").end_frame();
         let c = ctx.config.get();
         self.hotkey_mod = c.overlay.hotkey_modifiers;
         self.hotkey_key = c.overlay.hotkey_key;

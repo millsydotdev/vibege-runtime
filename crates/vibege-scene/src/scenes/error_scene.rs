@@ -26,23 +26,17 @@ impl Scene for ErrorScene {
         SceneKind::Modal
     }
 
-    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
-        info!(msg = %self.message, "ErrorScene: displayed");
-        ctx.renderer.set_clear(0.15, 0.05, 0.05, 1.0);
-        Ok(SceneAction::Continue)
-    }
-
     fn on_render(&mut self, ctx: &mut SceneContext) -> SceneResult {
         ctx.renderer
             .draw_rect(200.0, 180.0, 400.0, 240.0, 0.2, 0.05, 0.05, 1.0);
         ctx.renderer
             .draw_rect(200.0, 180.0, 400.0, 40.0, 0.5, 0.1, 0.1, 1.0);
         ctx.renderer
-            .draw_text(220.0, 190.0, "Scene Error", 14.0, 1.0, 1.0, 1.0);
+            .draw_text(220.0, 190.0, "Game Error", 14.0, 1.0, 1.0, 1.0);
         ctx.renderer.draw_text(
             220.0,
             240.0,
-            "Something went wrong in this scene.",
+            "Something went wrong in this game.",
             9.0,
             0.8,
             0.8,
@@ -55,10 +49,18 @@ impl Scene for ErrorScene {
         Ok(SceneAction::Continue)
     }
 
+    fn on_create(&mut self, ctx: &mut SceneContext) -> SceneResult {
+        info!(msg = %self.message, "ErrorScene: displayed");
+        ctx.renderer.set_clear(0.15, 0.05, 0.05, 1.0);
+        Ok(SceneAction::Continue)
+    }
+
     fn on_update(&mut self, ctx: &mut SceneContext, _dt: f64) -> SceneResult {
         let inp = crate::input_helper::InputState::new(&ctx.input, &["enter"]);
         if inp.pressed(0) {
-            return Ok(SceneAction::PopModal);
+            return Ok(SceneAction::PopToRoot(Box::new(
+                super::home_scene::HomeScene::new(),
+            )));
         }
         Ok(SceneAction::Continue)
     }

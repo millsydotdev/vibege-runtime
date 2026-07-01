@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use super::error_scene::ErrorScene;
 use super::game_manager::GameSession;
 use crate::scene::{Scene, SceneAction, SceneContext, SceneId, SceneResult};
 use tracing::info;
@@ -106,7 +107,9 @@ impl Scene for GameScene {
             Ok(()) => Ok(SceneAction::Continue),
             Err(e) => {
                 info!(game = %self.game_name, "Game exited: {e}");
-                Ok(SceneAction::Pop)
+                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(
+                    &format!("{} exited: {}", self.game_name, e),
+                ))))
             }
         }
     }
@@ -119,7 +122,9 @@ impl Scene for GameScene {
             Ok(()) => Ok(SceneAction::Continue),
             Err(e) => {
                 info!(game = %self.game_name, "Game render exited: {e}");
-                Ok(SceneAction::Pop)
+                Ok(SceneAction::PushModal(Box::new(ErrorScene::new(
+                    &format!("{} render error: {}", self.game_name, e),
+                ))))
             }
         }
     }

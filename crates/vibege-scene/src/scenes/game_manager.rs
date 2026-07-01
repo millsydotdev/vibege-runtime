@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use mlua::{Function, Lua};
 use tracing::{info, warn};
@@ -9,6 +10,8 @@ use vibege_core::{EventBus, RuntimeEvent};
 use vibege_input::InputManager;
 use vibege_renderer::Renderer;
 use vibege_sdk::SdkState;
+
+const LUA_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// A live game session with its own isolated Lua VM.
 pub struct GameSession {
@@ -94,6 +97,10 @@ impl GameSession {
         })
     }
 
+    /// Execute the game's update function.
+    /// NOTE: Lua is not `Send`, so we cannot use thread-based timeouts.
+    /// A long-running Lua script (infinite loop) will block the engine.
+    /// This will be resolved when games run in sandboxed processes (Wave 21).
     pub fn update(&self, dt: f64) -> Result<(), String> {
         SdkState::tick(&self.sdk_state, dt);
         if self.has_update {
@@ -106,6 +113,8 @@ impl GameSession {
         Ok(())
     }
 
+    /// Execute the game's render function.
+    /// NOTE: Same threading limitation as update().
     pub fn render(&self) -> Result<(), String> {
         if self.has_render {
             if let Ok(render_fn) = self.lua.globals().get::<Function>("render") {

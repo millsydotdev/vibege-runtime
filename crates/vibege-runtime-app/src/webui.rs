@@ -34,7 +34,7 @@ impl WebViewHandle {
         }
     }
 
-    pub fn init(&mut self, window_handle: &impl HasWindowHandle) -> Result<(), String> {
+    pub fn init(&mut self, window_handle: &impl HasWindowHandle, width: u32, height: u32) -> Result<(), String> {
         let html = include_str!("../../../resources/ui/index.html");
         info!("Creating webview UI");
 
@@ -44,8 +44,12 @@ impl WebViewHandle {
 
         let webview = wry::WebViewBuilder::new()
             .with_html(html.to_string())
+            .with_bounds(wry::Rect {
+                position: winit::dpi::Position::Physical(winit::dpi::PhysicalPosition::new(0, 0)),
+                size: winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(width, height)),
+            })
             .with_ipc_handler(move |request: wry::http::Request<String>| {
-                let body = request.body(); // String body from JavaScript
+                let body = request.body();
                 let resp = handle_ipc(body, &cfg, &eb);
                 if let Ok(guard) = wv_shared.lock() {
                     if let Some(ref wv) = *guard {
@@ -81,6 +85,17 @@ impl WebViewHandle {
     }
     pub fn toggle(&mut self) {
         self.set_visible(!self.visible);
+    }
+
+    pub fn resize(&self, width: u32, height: u32) {
+        if let Ok(guard) = self.webview.lock() {
+            if let Some(ref wv) = *guard {
+                let _ = wv.set_bounds(wry::Rect {
+                    position: winit::dpi::Position::Physical(winit::dpi::PhysicalPosition::new(0, 0)),
+                    size: winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(width, height)),
+                });
+            }
+        }
     }
 }
 

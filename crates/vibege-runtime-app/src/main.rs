@@ -114,7 +114,7 @@ fn main() -> anyhow::Result<()> {
     )));
     {
         let mut wh = webview_handle.lock().expect("webview lock");
-        if let Err(e) = wh.init(&*window) {
+        if let Err(e) = wh.init(&*window, cli.width, cli.height) {
             warn!("Webview init failed (non-fatal): {e}");
         } else {
             info!("Webview active — Ctrl+Shift+U to toggle");
@@ -260,6 +260,12 @@ fn main() -> anyhow::Result<()> {
                             event_bus.publish(&RuntimeEvent::WindowRestored);
                         } else {
                             event_bus.publish(&RuntimeEvent::WindowMinimized);
+                        }
+                    }
+                    winit::event::WindowEvent::Resized(size) => {
+                        // Resize the webview to fill the new window size
+                        if let Ok(wh) = webview_handle.lock() {
+                            wh.resize(size.width, size.height);
                         }
                     }
                     _ => {}
